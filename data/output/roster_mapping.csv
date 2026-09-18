@@ -1,0 +1,185 @@
+manager,player,team,position,slot,player_normalized,nflverse_player_id,nflverse_name,nflverse_team,nflverse_position,match_method,match_confidence
+Vader's Raiders,Baker Mayfield,TB,QB,QB,baker mayfield,00-0034855,Baker Mayfield,,QB,exact,100.0
+Vader's Raiders,Jonathan Taylor,Ind,RB,RB,jonathan taylor,00-0036223,Jonathan Taylor,,RB,exact,100.0
+Vader's Raiders,Cam Skattebo,NYG,RB,RB,cam skattebo,00-0040715,Cam Skattebo,,RB,exact,100.0
+Vader's Raiders,Emeka Egbuka,TB,WR,WR,emeka egbuka,00-0040129,Emeka Egbuka,,WR,exact,100.0
+Vader's Raiders,Luther Burden III,Chi,WR,WR,luther burden,00-0040735,Luther Burden III,,WR,exact,100.0
+Vader's Raiders,Michael Mayer,LV,TE,TE,michael mayer,00-0039066,Michael Mayer,,TE,exact,100.0
+Vader's Raiders,Jadarian Price,Sea,RB,W/R/T,jadarian price,00-0041512,Jadarian Price,,RB,exact,100.0
+Vader's Raiders,Cairo Santos,Chi,K,K,cairo santos,00-0031203,Cairo Santos,,K,exact,100.0
+Vader's Raiders,Patriots,NE,DEF,DEF,patriots,,,NE,DEF,team_defense,100.0
+Vader's Raiders,Brock Bowers,LV,TE,BN,brock bowers,00-0039338,Brock Bowers,,TE,exact,100.0
+Vader's Raiders,Alec Pierce,Ind,WR,BN,alec pierce,00-0037664,Alec Pierce,,WR,exact,100.0
+Vader's Raiders,Michael Pittman Jr.,Pit,WR,BN,michael pittman,00-0036252,Michael Pittman,,WR,surname_initial_position,94.0
+Vader's Raiders,Malik Willis,Mia,QB,BN,malik willis,00-0038128,Malik Willis,,QB,exact,100.0
+Vader's Raiders,Dontayvion Wicks,Phi,WR,BN,dontayvion wicks,00-0038393,Dontayvion Wicks,,WR,exact,100.0
+Vader's Raiders,Caleb Douglas,Mia,WR,BN,caleb douglas,00-0041523,Caleb Douglas,,WR,exact,100.0
+Vader's Raiders,Jordan Mason,Min,RB,IR,jordan mason,00-0037525,Jordan Mason,,RB,exact,100.0
+Belichick Yo'self,Dak Prescott,Dal,QB,QB,dak prescott,00-0033077,Dak Prescott,,QB,exact,100.0
+Belichick Yo'self,Christian McCaffrey,SF,RB,RB,christian mccaffrey,00-0033280,Christian McCaffrey,,RB,exact,100.0
+Belichick Yo'self,TreVeyon Henderson,NE,RB,RB,treveyon henderson,00-0040734,TreVeyon Henderson,,RB,exact,100.0
+Belichick Yo'self,George Pickens,Dal,WR,WR,george pickens,00-0037247,George Pickens,,WR,exact,100.0
+Belichick Yo'self,Zay Flowers,Bal,WR,WR,zay flowers,00-0039064,Zay Flowers,,WR,exact,100.0
+Belichick Yo'self,Kyle Pitts Sr.,Atl,TE,TE,kyle pitts,00-0036970,Kyle Pitts,,TE,exact,100.0
+Belichick Yo'self,Deebo Samuel Sr.,SF,WR,W/R/T,deebo samuel,00-0035719,Deebo Samuel Sr.,,WR,exact,100.0
+Belichick Yo'self,Jake Bates,Det,K,K,jake bates,00-0039172,Jake Bates,,K,exact,100.0
+Belichick Yo'self,Chargers,LAC,DEF,DEF,chargers,,,LAC,DEF,team_defense,100.0
+Belichick Yo'self,Rico Dowdle,Pit,RB,BN,rico dowdle,00-0036139,Rico Dowdle,,RB,exact,100.0
+Belichick Yo'self,Jonathon Brooks,Car,RB,BN,jonathon brooks,00-0039344,Jonathon Brooks,,RB,exact,100.0
+Belichick Yo'self,Matthew Golden,GB,WR,BN,matthew golden,00-0040667,Matthew Golden,,WR,exact,100.0
+Belichick Yo'self,RJ Harvey,Den,RB,BN,rj harvey,00-0040730,RJ Harvey,,RB,exact,100.0
+Belichick Yo'self,Rashid Shaheed,Sea,WR,BN,rashid shaheed,00-0037545,Rashid Shaheed,,WR,exact,100.0
+Belichick Yo'self,Tyler Allgeier,Ari,RB,BN,tyler allgeier,00-0037263,Tyler Allgeier,,RB,exact,100.0
+Belichick Yo'self,A.J. Brown,NE,WR,IR,a j brown,00-0035676,A.J. Brown,,WR,exact,100.0
+CM Skunks,Brock Purdy,SF,QB,QB,brock purdy,00-0037834,Brock Purdy,,QB,exact,100.0
+CM Skunks,Quinshon Judkins,Cle,RB,RB,quinshon judkins,00-0040784,Quinshon Judkins,,RB,exact,100.0
+CM Skunks,Bucky Irving,TB,RB,RB,bucky irving,00-0039361,Bucky Irving,,RB,exact,100.0
+CM Skunks,Jaxon Smith-Njigba,Sea,WR,WR,jaxon smith njigba,00-0038543,Jaxon Smith-Njigba,,WR,exact,100.0
+CM Skunks,Nico Collins,Hou,WR,WR,nico collins,00-0036554,Nico Collins,,WR,exact,100.0
+CM Skunks,Tucker Kraft,GB,TE,TE,tucker kraft,00-0038996,Tucker Kraft,,TE,exact,100.0
+CM Skunks,Ladd McConkey,LAC,WR,W/R/T,ladd mcconkey,00-0039915,Ladd McConkey,,WR,exact,100.0
+CM Skunks,Chase McLaughlin,TB,K,K,chase mclaughlin,00-0035358,Chase McLaughlin,,K,exact,100.0
+CM Skunks,49ers,SF,DEF,DEF,49ers,,,SF,DEF,team_defense,100.0
+CM Skunks,MarShawn Lloyd,GB,RB,BN,marshawn lloyd,00-0039811,MarShawn Lloyd,,RB,exact,100.0
+CM Skunks,Brian Thomas Jr.,Jax,WR,BN,brian thomas,00-0039893,Brian Thomas Jr.,,WR,exact,100.0
+CM Skunks,Jacory Croskey-Merritt,Was,RB,BN,jacory croskey merritt,00-0040242,Jacory Croskey-Merritt,,RB,exact,100.0
+CM Skunks,Woody Marks,Hou,RB,BN,woody marks,00-0040583,Woody Marks,,RB,exact,100.0
+CM Skunks,Wan'Dale Robinson,Ten,WR,BN,wandale robinson,00-0038117,Wan'Dale Robinson,,WR,exact,100.0
+CM Skunks,Jared Goff,Det,QB,BN,jared goff,00-0033106,Jared Goff,,QB,exact,100.0
+Flippin Phins,Caleb Williams,Chi,QB,QB,caleb williams,00-0039918,Caleb Williams,,QB,exact,100.0
+Flippin Phins,Saquon Barkley,Phi,RB,RB,saquon barkley,00-0034844,Saquon Barkley,,RB,exact,100.0
+Flippin Phins,Kyren Williams,LAR,RB,RB,kyren williams,00-0037840,Kyren Williams,,RB,exact,100.0
+Flippin Phins,Justin Jefferson,Min,WR,WR,justin jefferson,00-0036322,Justin Jefferson,MIN,WR,explicit_override,100.0
+Flippin Phins,Christian Watson,GB,WR,WR,christian watson,00-0038124,Christian Watson,,WR,exact,100.0
+Flippin Phins,Colston Loveland,Chi,TE,TE,colston loveland,00-0040126,Colston Loveland,,TE,exact,100.0
+Flippin Phins,J.K. Dobbins,Den,RB,W/R/T,j k dobbins,00-0036158,J.K. Dobbins,,RB,exact,100.0
+Flippin Phins,Evan McPherson,Cin,K,K,evan mcpherson,00-0036854,Evan McPherson,,K,exact,100.0
+Flippin Phins,Ravens,Bal,DEF,DEF,ravens,,,BAL,DEF,team_defense,100.0
+Flippin Phins,Carnell Tate,Ten,WR,BN,carnell tate,00-0041438,Carnell Tate,,WR,exact,100.0
+Flippin Phins,Kenny Gainwell,TB,RB,BN,kenny gainwell,00-0036919,Kenny Gainwell,,RB,exact,100.0
+Flippin Phins,KC Concepcion Jr.,Cle,WR,BN,kc concepcion,00-0041547,KC Concepcion,,WR,exact,100.0
+Flippin Phins,Mike Washington Jr.,LV,RB,BN,mike washington,00-0040878,Mike Washington Jr.,,RB,surname_initial_position,94.0
+Flippin Phins,Juwan Johnson,NO,TE,BN,juwan johnson,00-0036040,Juwan Johnson,,TE,exact,100.0
+Flippin Phins,Tyler Shough,NO,QB,BN,tyler shough,00-0040743,Tyler Shough,,QB,exact,100.0
+Lynch Mob,Joe Burrow,Cin,QB,QB,joe burrow,00-0036442,Joe Burrow,,QB,exact,100.0
+Lynch Mob,Jeremiyah Love,Ari,RB,RB,jeremiyah love,00-0041027,Jeremiyah Love,,RB,exact,100.0
+Lynch Mob,Breece Hall,NYJ,RB,RB,breece hall,00-0038120,Breece Hall,,RB,exact,100.0
+Lynch Mob,Ja'Marr Chase,Cin,WR,WR,jamarr chase,00-0036900,Ja'Marr Chase,,WR,exact,100.0
+Lynch Mob,DJ Moore,Buf,WR,WR,dj moore,00-0034827,DJ Moore,,WR,exact,100.0
+Lynch Mob,Sam LaPorta,Det,TE,TE,sam laporta,00-0039065,Sam LaPorta,,TE,exact,100.0
+Lynch Mob,DK Metcalf,Pit,WR,W/R/T,dk metcalf,00-0035640,DK Metcalf,,WR,exact,100.0
+Lynch Mob,Matt Gay,LV,K,K,matt gay,00-0035269,Matt Gay,,K,surname_initial_position,94.0
+Lynch Mob,Buccaneers,TB,DEF,DEF,buccaneers,,,TB,DEF,team_defense,100.0
+Lynch Mob,Josh Jacobs,GB,RB,BN,josh jacobs,00-0035700,Josh Jacobs,,RB,exact,100.0
+Lynch Mob,Jakobi Meyers,Jax,WR,BN,jakobi meyers,00-0034960,Jakobi Meyers,,WR,exact,100.0
+Lynch Mob,Kenyon Sadiq,NYJ,TE,BN,kenyon sadiq,00-0041032,Kenyon Sadiq,,TE,exact,100.0
+Lynch Mob,Jalen Nailor,LV,WR,BN,jalen nailor,00-0037291,Jalen Nailor,,WR,exact,100.0
+Lynch Mob,C.J. Stroud,Hou,QB,BN,c j stroud,00-0039163,C.J. Stroud,,QB,exact,100.0
+Lynch Mob,Jordyn Tyson,NO,WR,IR,jordyn tyson,00-0041029,Jordyn Tyson,,WR,exact,100.0
+Lynch Mob,Texans,Hou,DEF,BN,texans,,,HOU,DEF,team_defense,100.0
+Purple People Eaters,Trevor Lawrence,Jax,QB,QB,trevor lawrence,00-0036971,Trevor Lawrence,,QB,exact,100.0
+Purple People Eaters,Bijan Robinson,Atl,RB,RB,bijan robinson,00-0038542,Bijan Robinson,,RB,exact,100.0
+Purple People Eaters,Bhayshul Tuten,Jax,RB,RB,bhayshul tuten,00-0040719,Bhayshul Tuten,,RB,exact,100.0
+Purple People Eaters,Drake London,Atl,WR,WR,drake london,00-0037238,Drake London,,WR,exact,100.0
+Purple People Eaters,Chris Olave,NO,WR,WR,chris olave,00-0037239,Chris Olave,,WR,exact,100.0
+Purple People Eaters,Dalton Kincaid,Buf,TE,TE,dalton kincaid,00-0038933,Dalton Kincaid,,TE,exact,100.0
+Purple People Eaters,Garrett Wilson,NYJ,WR,W/R/T,garrett wilson,00-0037740,Garrett Wilson,,WR,exact,100.0
+Purple People Eaters,Tyler Loop,Bal,K,K,tyler loop,00-0040074,Tyler Loop,,K,exact,100.0
+Purple People Eaters,Vikings,Min,DEF,DEF,vikings,,,MIN,DEF,team_defense,100.0
+Purple People Eaters,Tony Pollard,Ten,RB,BN,tony pollard,00-0035261,Tony Pollard,,RB,exact,100.0
+Purple People Eaters,Rome Odunze,Chi,WR,BN,rome odunze,00-0039919,Rome Odunze,,WR,exact,100.0
+Purple People Eaters,Kyle Monangai,Chi,RB,BN,kyle monangai,00-0040236,Kyle Monangai,,RB,exact,100.0
+Purple People Eaters,Brian Robinson,Atl,RB,BN,brian robinson,00-0037746,Brian Robinson,,RB,exact,100.0
+Purple People Eaters,Romeo Doubs,NE,WR,BN,romeo doubs,00-0037816,Romeo Doubs,,WR,exact,100.0
+Purple People Eaters,Tyjae Spears,Ten,RB,BN,tyjae spears,00-0039032,Tyjae Spears,,RB,exact,100.0
+Redzone,Lamar Jackson,Bal,QB,QB,lamar jackson,00-0034796,Lamar Jackson,,QB,surname_initial_position,94.0
+Redzone,De'Von Achane,Mia,RB,RB,devon achane,00-0039040,De'Von Achane,,RB,exact,100.0
+Redzone,Travis Etienne Jr.,NO,RB,RB,travis etienne,00-0036973,Travis Etienne,,RB,exact,100.0
+Redzone,CeeDee Lamb,Dal,WR,WR,ceedee lamb,00-0036358,CeeDee Lamb,,WR,exact,100.0
+Redzone,Michael Wilson,Ari,WR,WR,michael wilson,00-0038559,Michael Wilson,,WR,exact,100.0
+Redzone,Travis Kelce,KC,TE,TE,travis kelce,00-0030506,Travis Kelce,,TE,exact,100.0
+Redzone,Jalen Coker,Car,WR,W/R/T,jalen coker,00-0039491,Jalen Coker,,WR,exact,100.0
+Redzone,Jason Myers,Sea,K,K,jason myers,00-0031492,Jason Myers,,K,exact,100.0
+Redzone,Rams,LAR,DEF,DEF,rams,,,LAR,DEF,team_defense,100.0
+Redzone,Harold Fannin Jr.,Cle,TE,BN,harold fannin,00-0040663,Harold Fannin Jr.,,TE,exact,100.0
+Redzone,Kyler Murray,Min,QB,BN,kyler murray,00-0035228,Kyler Murray,,QB,exact,100.0
+Redzone,Rachaad White,Was,RB,BN,rachaad white,00-0037256,Rachaad White,,RB,exact,100.0
+Redzone,Makai Lemon,Phi,WR,BN,makai lemon,00-0040867,Makai Lemon,,WR,exact,100.0
+Redzone,Tank Bigsby,Phi,RB,BN,tank bigsby,00-0038555,Tank Bigsby,,RB,exact,100.0
+Redzone,Jonah Coleman,Den,RB,BN,jonah coleman,00-0041496,Jonah Coleman,,RB,exact,100.0
+Sun Tzu's Battalion,Drake Maye,NE,QB,QB,drake maye,00-0039851,Drake Maye,,QB,exact,100.0
+Sun Tzu's Battalion,Kenneth Walker III,KC,RB,RB,kenneth walker,00-0038134,Kenneth Walker III,,RB,exact,100.0
+Sun Tzu's Battalion,Omarion Hampton,LAC,RB,RB,omarion hampton,00-0040666,Omarion Hampton,,RB,exact,100.0
+Sun Tzu's Battalion,Tee Higgins,Cin,WR,WR,tee higgins,00-0036410,Tee Higgins,,WR,exact,100.0
+Sun Tzu's Battalion,Jaylen Waddle,Den,WR,WR,jaylen waddle,00-0036613,Jaylen Waddle,,WR,exact,100.0
+Sun Tzu's Battalion,Tyler Warren,Ind,TE,TE,tyler warren,00-0040128,Tyler Warren,,TE,exact,100.0
+Sun Tzu's Battalion,Mike Evans,SF,WR,W/R/T,mike evans,00-0031408,Mike Evans,,WR,surname_initial_position,94.0
+Sun Tzu's Battalion,Ka'imi Fairbairn,Hou,K,K,kaimi fairbairn,00-0032726,Ka'imi Fairbairn,,K,exact,100.0
+Sun Tzu's Battalion,Jaguars,Jax,DEF,DEF,jaguars,,,JAX,DEF,team_defense,100.0
+Sun Tzu's Battalion,Davante Adams,LAR,WR,BN,davante adams,00-0031381,Davante Adams,,WR,exact,100.0
+Sun Tzu's Battalion,Chris Godwin Jr.,TB,WR,BN,chris godwin,00-0033921,Chris Godwin Jr.,,WR,exact,100.0
+Sun Tzu's Battalion,Jayden Reed,GB,WR,BN,jayden reed,00-0039146,Jayden Reed,,WR,exact,100.0
+Sun Tzu's Battalion,Chris Rodriguez Jr.,Jax,RB,BN,chris rodriguez,00-0038611,Chris Rodriguez Jr.,,RB,exact,100.0
+Sun Tzu's Battalion,Matthew Stafford,LAR,QB,BN,matthew stafford,00-0026498,Matthew Stafford,,QB,exact,100.0
+Sun Tzu's Battalion,Devin Singletary,NYG,RB,BN,devin singletary,00-0035250,Devin Singletary,,RB,exact,100.0
+1ST & SKOL,Jalen Hurts,Phi,QB,QB,jalen hurts,00-0036389,Jalen Hurts,,QB,exact,100.0
+1ST & SKOL,Jahmyr Gibbs,Det,RB,RB,jahmyr gibbs,00-0039139,Jahmyr Gibbs,,RB,exact,100.0
+1ST & SKOL,Ashton Jeanty,LV,RB,RB,ashton jeanty,00-0040122,Ashton Jeanty,,RB,exact,100.0
+1ST & SKOL,Tetairoa McMillan,Car,WR,WR,tetairoa mcmillan,00-0040124,Tetairoa McMillan,,WR,exact,100.0
+1ST & SKOL,Quentin Johnston,LAC,WR,WR,quentin johnston,00-0038544,Quentin Johnston,,WR,exact,100.0
+1ST & SKOL,Dallas Goedert,Phi,TE,TE,dallas goedert,00-0034351,Dallas Goedert,,TE,exact,100.0
+1ST & SKOL,Javonte Williams,Dal,RB,W/R/T,javonte williams,00-0036997,Javonte Williams,,RB,exact,100.0
+1ST & SKOL,Eddy Pineiro,SF,K,K,eddy pineiro,00-0034173,Eddy Pineiro,,K,exact,100.0
+1ST & SKOL,Broncos,Den,DEF,DEF,broncos,,,DEN,DEF,team_defense,100.0
+1ST & SKOL,Marvin Harrison Jr.,Ari,WR,BN,marvin harrison,00-0039988,Marvin Harrison Jr.,ARI,WR,explicit_override,100.0
+1ST & SKOL,Aaron Jones Sr.,Min,RB,BN,aaron jones,00-0033293,Aaron Jones,MIN,RB,explicit_override,100.0
+1ST & SKOL,Mark Andrews,Bal,TE,BN,mark andrews,00-0034753,Mark Andrews,,TE,exact,100.0
+1ST & SKOL,Malik Washington,Mia,WR,BN,malik washington,00-0039880,Malik Washington,,WR,exact,100.0
+1ST & SKOL,Kaelon Black,SF,RB,BN,kaelon black,00-0041052,Kaelon Black,,RB,exact,100.0
+1ST & SKOL,Devaughn Vele,NO,WR,BN,devaughn vele,00-0039424,Devaughn Vele,,WR,exact,100.0
+1ST & SKOL,Zach Charbonnet,Sea,RB,IR,zach charbonnet,00-0039165,Zach Charbonnet,,RB,exact,100.0
+Purple Reign,Justin Herbert,LAC,QB,QB,justin herbert,00-0036355,Justin Herbert,,QB,exact,100.0
+Purple Reign,Rhamondre Stevenson,NE,RB,RB,rhamondre stevenson,00-0036875,Rhamondre Stevenson,,RB,exact,100.0
+Purple Reign,Jaylen Warren,Pit,RB,RB,jaylen warren,00-0037228,Jaylen Warren,,RB,exact,100.0
+Purple Reign,Amon-Ra St. Brown,Det,WR,WR,amon ra st brown,00-0036963,Amon-Ra St. Brown,,WR,exact,100.0
+Purple Reign,Puka Nacua,LAR,WR,WR,puka nacua,00-0039075,Puka Nacua,,WR,exact,100.0
+Purple Reign,Trey McBride,Ari,TE,TE,trey mcbride,00-0037744,Trey McBride,,TE,exact,100.0
+Purple Reign,Malik Nabers,NYG,WR,W/R/T,malik nabers,00-0039337,Malik Nabers,,WR,exact,100.0
+Purple Reign,Cameron Dicker,LAC,K,K,cameron dicker,00-0037224,Cameron Dicker,,K,exact,100.0
+Purple Reign,Cowboys,Dal,DEF,DEF,cowboys,,,DAL,DEF,team_defense,100.0
+Purple Reign,Parker Washington,Jax,WR,BN,parker washington,00-0038606,Parker Washington,,WR,exact,100.0
+Purple Reign,Blake Corum,LAR,RB,BN,blake corum,00-0039738,Blake Corum,,RB,exact,100.0
+Purple Reign,Josh Downs,Ind,WR,BN,josh downs,00-0038997,Josh Downs,,WR,exact,100.0
+Purple Reign,Bo Nix,Den,QB,BN,bo nix,00-0039732,Bo Nix,,QB,exact,100.0
+Purple Reign,Isaiah Likely,NYG,TE,BN,isaiah likely,00-0037838,Isaiah Likely,,TE,exact,100.0
+Purple Reign,Jordan Love,GB,QB,BN,jordan love,00-0036264,Jordan Love,,QB,exact,100.0
+My Diggs Curves Left,Josh Allen,Buf,QB,QB,josh allen,00-0034857,Josh Allen,,QB,surname_initial_position,94.0
+My Diggs Curves Left,James Cook III,Buf,RB,RB,james cook,00-0037248,James Cook,,RB,exact,100.0
+My Diggs Curves Left,D'Andre Swift,Chi,RB,RB,dandre swift,00-0036275,D'Andre Swift,,RB,exact,100.0
+My Diggs Curves Left,Rashee Rice,KC,WR,WR,rashee rice,00-0039067,Rashee Rice,,WR,exact,100.0
+My Diggs Curves Left,Jameson Williams,Det,WR,WR,jameson williams,00-0037240,Jameson Williams,,WR,exact,100.0
+My Diggs Curves Left,George Kittle,SF,TE,TE,george kittle,00-0033288,George Kittle,,TE,exact,100.0
+My Diggs Curves Left,Chuba Hubbard,Car,RB,W/R/T,chuba hubbard,00-0036555,Chuba Hubbard,,RB,exact,100.0
+My Diggs Curves Left,Cam Little,Jax,K,K,cam little,00-0039409,Cam Little,,K,exact,100.0
+My Diggs Curves Left,Eagles,Phi,DEF,DEF,eagles,,,PHI,DEF,team_defense,100.0
+My Diggs Curves Left,Dalton Schultz,Hou,TE,BN,dalton schultz,00-0034383,Dalton Schultz,,TE,exact,100.0
+My Diggs Curves Left,Jordan Addison,Min,WR,BN,jordan addison,00-0038994,Jordan Addison,,WR,exact,100.0
+My Diggs Curves Left,Stefon Diggs,Was,WR,BN,stefon diggs,00-0031588,Stefon Diggs,,WR,exact,100.0
+My Diggs Curves Left,Jaxson Dart,NYG,QB,BN,jaxson dart,00-0040691,Jaxson Dart,,QB,exact,100.0
+My Diggs Curves Left,Keaton Mitchell,LAC,RB,BN,keaton mitchell,00-0038454,Keaton Mitchell,,RB,exact,100.0
+My Diggs Curves Left,Khalil Shakir,Buf,WR,BN,khalil shakir,00-0037261,Khalil Shakir,,WR,exact,100.0
+Big Nasty,Jayden Daniels,Was,QB,QB,jayden daniels,00-0039910,Jayden Daniels,,QB,exact,100.0
+Big Nasty,Derrick Henry,Bal,RB,RB,derrick henry,00-0032764,Derrick Henry,,RB,exact,100.0
+Big Nasty,David Montgomery,Hou,RB,RB,david montgomery,00-0035685,David Montgomery,,RB,exact,100.0
+Big Nasty,DeVonta Smith,Phi,WR,WR,devonta smith,00-0036912,DeVonta Smith,PHI,WR,explicit_override,100.0
+Big Nasty,Terry McLaurin,Was,WR,WR,terry mclaurin,00-0035659,Terry McLaurin,,WR,exact,100.0
+Big Nasty,Hunter Henry,NE,TE,TE,hunter henry,00-0033090,Hunter Henry,,TE,exact,100.0
+Big Nasty,Chase Brown,Cin,RB,W/R/T,chase brown,00-0038597,Chase Brown,,RB,exact,100.0
+Big Nasty,Brandon Aubrey,Dal,K,K,brandon aubrey,00-0037692,Brandon Aubrey,,K,exact,100.0
+Big Nasty,Seahawks,Sea,DEF,DEF,seahawks,,,SEA,DEF,team_defense,100.0
+Big Nasty,Jake Ferguson,Dal,TE,BN,jake ferguson,00-0038041,Jake Ferguson,,TE,exact,100.0
+Big Nasty,Patrick Mahomes,KC,QB,BN,patrick mahomes,00-0033873,Patrick Mahomes,,QB,exact,100.0
+Big Nasty,Courtland Sutton,Den,WR,BN,courtland sutton,00-0034348,Courtland Sutton,,WR,exact,100.0
+Big Nasty,Xavier Worthy,KC,WR,BN,xavier worthy,00-0039894,Xavier Worthy,,WR,exact,100.0
+Big Nasty,Keenan Allen,Ind,WR,BN,keenan allen,00-0030279,Keenan Allen,,WR,exact,100.0
+Big Nasty,Tre Tucker,LV,WR,BN,tre tucker,00-0038563,Tre Tucker,,WR,exact,100.0

@@ -1,0 +1,5 @@
+.env 
+config.json 
+oauth_tokens.json 
+__pycache__/
+*.pyc
