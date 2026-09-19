@@ -2573,8 +2573,8 @@ def build_html(
                     </span>
                 </td>
                 <td>{html_escape(row.get("slot", ""))}</td>
-                <td>{projection_display}</td>
-                <td>
+                <td class="projection-col">{projection_display}</td>
+                <td class="confidence-col">
                     <span class="hover-value" tabindex="0"
                         data-tooltip="{average_tooltip}">
                         {fmt(recent_actual_avg.get(player_id))}
@@ -2979,6 +2979,7 @@ td {{
 
 th {{
     color: var(--muted);
+    white-space: nowrap;
 }}
 
 .table-wrap {{
@@ -3102,9 +3103,15 @@ table.sortable td:first-child {{
 .chip-gray {{ color: #aab4c5; background: #aab4c51c; }}
 
 .player-team {{
+    display: block;
     color: var(--muted);
     font-size: 12px;
-    margin-left: 4px;
+    margin-top: 2px;
+}}
+
+.projection-col,
+.confidence-col {{
+    white-space: nowrap;
 }}
 
 #hover-tooltip {{
@@ -3130,6 +3137,7 @@ table.sortable td:first-child {{
     font: inherit;
     font-weight: 700;
     text-align: left;
+    white-space: nowrap;
     cursor: pointer;
 }}
 
@@ -3295,10 +3303,10 @@ footer {{
                 <tr>
                     <th data-sort="text">Player</th>
                     <th data-sort="text">Roster</th>
-                    <th data-sort="number" title="Fantasy-point projection; the value in parentheses is the player-specific plus/minus estimate">Proj. Pts.</th>
+                    <th class="projection-col" data-sort="number" title="Fantasy-point projection; the value in parentheses is the player-specific plus/minus estimate">Proj. Pts.</th>
                     <th data-sort="number" title="Average actual league-scoring fantasy points over the latest three included games">3-Wk Avg</th>
                     <th class="spark-col" title="Recent six included games: actual fantasy points for consistency and weighted opportunity for role trend">6-Wk Trend</th>
-                    <th data-sort="number">Confidence</th>
+                    <th class="confidence-col" data-sort="number">Confidence</th>
                     <th data-sort="text">Trend signals</th>
                 </tr>
             </thead>
