@@ -10,7 +10,7 @@ Primary data source:
 
 Current league defaults:
     12 teams
-    Standard scoring
+    Custom Yahoo league scoring
     1 QB
     2 RB
     2 WR
@@ -94,7 +94,7 @@ CACHE_DIR = DATA_DIR / "cache"
 OUTPUT_DIR = DATA_DIR / "output"
 
 ROSTER_FILE = DATA_DIR / "my_roster.txt"
-HTML_OUTPUT = Path("fantasy_dashboard.html")
+HTML_OUTPUT = Path("index.html")
 LEARNED_WEIGHT_MODEL_PATH = CACHE_DIR / "learned_weight_model.json"
 LEARNED_WEIGHT_REPORT_PATH = OUTPUT_DIR / "learned_metric_weights.csv"
 
@@ -110,10 +110,10 @@ ROSTER_SLOTS = {
     "BENCH": 5,
 }
 
-# STANDARD SCORING
+# CUSTOM YAHOO LEAGUE SCORING
 SCORING = {
     "pass_yd": 0.04,
-    "pass_td": 4.0,
+    "pass_td": 6.0,
     "int": -2.0,
     "rush_yd": 0.10,
     "rush_td": 6.0,
@@ -122,7 +122,13 @@ SCORING = {
     "rec_td": 6.0,
     "fum_lost": -2.0,
     "two_pt": 2.0,
+    # Return/long-TD settings are retained for the upcoming play-by-play
+    # scoring module; weekly player totals alone do not identify 40+ yard TDs.
+    "return_yd": 0.04,
     "return_td": 6.0,
+    "pass_td_40_bonus": 1.0,
+    "rush_td_40_bonus": 1.0,
+    "rec_td_40_bonus": 1.0,
 }
 
 # Recency weighting.
@@ -941,6 +947,11 @@ def standardize_player_stats(df: pd.DataFrame) -> pd.DataFrame:
             "pass_yds",
             "passing_yd",
         ],
+        "passing_attempts": [
+            "passing_attempts",
+            "pass_attempts",
+            "attempts",
+        ],
         "passing_tds": [
             "passing_tds",
             "pass_td",
@@ -996,6 +1007,7 @@ def standardize_player_stats(df: pd.DataFrame) -> pd.DataFrame:
 
     required_defaults = {
         "passing_yards": 0,
+        "passing_attempts": 0,
         "passing_tds": 0,
         "interceptions": 0,
         "rushing_yards": 0,
@@ -1022,6 +1034,7 @@ def standardize_player_stats(df: pd.DataFrame) -> pd.DataFrame:
         "season",
         "week",
         "passing_yards",
+        "passing_attempts",
         "passing_tds",
         "interceptions",
         "rushing_yards",
@@ -2087,6 +2100,7 @@ def sparkline(
     values: Iterable,
     width: int = 86,
     height: int = 18,
+    prior_season_points: int = 0,
 ) -> str:
 
     vals = []
@@ -2129,7 +2143,7 @@ def sparkline(
     # Convert the data points into a gentle Catmull-Rom-style cubic Bézier
     # path. It passes through every observed point while avoiding the hard
     # corners of an SVG polyline.
-    path_parts = [f"M {points[0][0]:.1f} {points[0][1]:.1f}"]
+    paths = []
     for i in range(len(points) - 1):
         previous = points[max(0, i - 1)]
         start = points[i]
@@ -2143,20 +2157,24 @@ def sparkline(
             end[0] - (following[0] - start[0]) / 6,
             end[1] - (following[1] - start[1]) / 6,
         )
-        path_parts.append(
+        path = (
+            f"M {start[0]:.1f} {start[1]:.1f} "
             f"C {control_1[0]:.1f} {control_1[1]:.1f}, "
             f"{control_2[0]:.1f} {control_2[1]:.1f}, "
             f"{end[0]:.1f} {end[1]:.1f}"
+        )
+        stroke = "#8792a6" if i < prior_season_points - 1 else "currentColor"
+        paths.append(
+            f'<path d="{path}" fill="none" stroke="{stroke}" '
+            f'stroke-width="2" stroke-linecap="round" '
+            f'stroke-linejoin="round"/>'
         )
 
     return (
         f'<svg class="spark" '
         f'viewBox="0 0 {width} {height}" '
         f'preserveAspectRatio="none">'
-        f'<path d="{" ".join(path_parts)}" '
-        f'fill="none" stroke="currentColor" '
-        f'stroke-width="2" stroke-linecap="round" '
-        f'stroke-linejoin="round"/>'
+        f'{"".join(paths)}'
         f'</svg>'
     )
 
@@ -2164,6 +2182,7 @@ def sparkline(
 def player_sparklines(
     history: pd.DataFrame,
     player_id: str,
+    current_season: int,
 ) -> Tuple[str, str]:
 
     if history.empty:
@@ -2179,17 +2198,53 @@ def player_sparklines(
 
     production = h["fantasy_points_std"].tolist()
 
-    opportunity = (
-        h["targets"].fillna(0)
-        + 0.55 * h["carries"].fillna(0)
-        + 0.03 * h.get(
-            "offense_pct",
+    source_season_values = h.get(
+        "source_season",
+        h.get("season", pd.Series(current_season, index=h.index)),
+    )
+    source_seasons = pd.to_numeric(
+        source_season_values,
+        errors="coerce",
+    ).fillna(current_season)
+    prior_season_points = int((source_seasons < current_season).sum())
+
+    position = clean_text(h.get("position", pd.Series("", index=h.index)).iloc[-1]).upper()
+    targets = h.get("targets", pd.Series(0, index=h.index)).fillna(0)
+    carries = h.get("carries", pd.Series(0, index=h.index)).fillna(0)
+    snap_share = h.get(
+        "offense_pct",
+        pd.Series(0, index=h.index),
+    ).fillna(0)
+
+    if position == "QB":
+        # QB opportunity is driven by passing volume and rushing involvement,
+        # not targets, which are not a quarterback opportunity measure.
+        passing_attempts = h.get(
+            "passing_attempts",
             pd.Series(0, index=h.index),
         ).fillna(0)
-    ).tolist()
+        opportunity = (
+            passing_attempts
+            + 0.50 * carries
+            + 0.03 * snap_share
+        ).tolist()
+    elif position == "RB":
+        opportunity = (
+            carries
+            + 0.75 * targets
+            + 0.03 * snap_share
+        ).tolist()
+    else:
+        # WR/TE opportunity prioritizes targets, with carries as a smaller
+        # supplementary component for designed touches.
+        opportunity = (
+            targets
+            + 0.55 * carries
+            + 0.03 * snap_share
+        ).tolist()
 
-    prod = sparkline(production)
-    opp = sparkline(opportunity)
+    prod = sparkline(production, prior_season_points=prior_season_points)
+    opp = sparkline(opportunity, prior_season_points=prior_season_points)
 
     return prod, opp
 
@@ -2352,6 +2407,12 @@ def build_html(
         f'{html_escape(manager)}</option>'
         for manager in fantasy_teams
     )
+    team_picker_options = "".join(
+        f'<button class="team-picker-option" type="button" '
+        f'data-team="{html_escape(manager)}">'
+        f'{html_escape(manager)}</button>'
+        for manager in fantasy_teams
+    )
 
     roster_proj = roster.merge(
         projections[
@@ -2400,7 +2461,7 @@ def build_html(
             .to_dict()
         )
         recent_actual_values = {
-            str(player_id): group["fantasy_points_std"].tolist()
+            str(player_id): group.to_dict("records")
             for player_id, group in recent_actual.groupby("player_id")
         }
 
@@ -2436,11 +2497,14 @@ def build_html(
         production_spark, opportunity_spark = player_sparklines(
             history,
             player_id,
+            season,
         )
         spark_tooltip = html_escape(
-            "Recent six included games. Pts is actual standard-scoring "
-            "fantasy points (a quick consistency view); Opp is the weighted "
-            "opportunity trend from targets, carries, and offensive snap share."
+            "Recent six included games. Pts is actual league-scoring "
+            "fantasy points (a quick consistency view); Opp is a position-aware "
+            "opportunity trend. It uses passing attempts and rushing involvement "
+            "for QBs, carries and targets for RBs, and targets for WRs/TEs. "
+            "Gray is last-season carry-over; color is the current season."
         )
         form_display = (
             f'<span class="spark-pair" tabindex="0" '
@@ -2450,17 +2514,31 @@ def build_html(
             f'<span class="spark-row spark-opportunity"><span>Opp</span>'
             f'{opportunity_spark or "—"}</span></span>'
         )
-        last_three_scores = recent_actual_values.get(player_id, [])
-        if last_three_scores:
-            score_list = ", ".join(
-                f"{safe_float(score):.1f}"
-                for score in last_three_scores
-            )
+        last_three_games = recent_actual_values.get(player_id, [])
+        if last_three_games:
+            week_scores = []
+            for game in last_three_games:
+                source_week = safe_float(
+                    game.get("source_week", game.get("week")),
+                    np.nan,
+                )
+                source_season = safe_float(
+                    game.get("source_season", game.get("season")),
+                    np.nan,
+                )
+                week_label = (
+                    f"Wk {source_week:.0f}"
+                    if np.isfinite(source_week)
+                    else "Week"
+                )
+                if np.isfinite(source_season) and int(source_season) != season:
+                    week_label += f" ({source_season:.0f})"
+                week_scores.append(
+                    f"{week_label}: "
+                    f"{safe_float(game.get('fantasy_points_std')):.1f}"
+                )
             average_tooltip = html_escape(
-                f"Actual standard-scoring points in the latest "
-                f"{len(last_three_scores)} included game(s), oldest to "
-                f"newest: {score_list}. "
-                f"Average: {fmt(recent_actual_avg.get(player_id))}."
+                " → ".join(week_scores)
             )
         else:
             average_tooltip = "No included game scores are available yet."
@@ -2626,6 +2704,7 @@ body {{
         radial-gradient(circle at 10% -10%, #27204f 0, transparent 35%),
         radial-gradient(circle at 95% 0%, #123d52 0, transparent 28%),
         var(--bg);
+    background-attachment: fixed;
     color: var(--text);
     font-family:
         -apple-system,
@@ -2637,7 +2716,7 @@ body {{
 header {{
     padding: 22px 0;
     border-bottom: 1px solid var(--border);
-    background: linear-gradient(90deg, #111631dd, #101a31bb);
+    background: var(--bg);
 }}
 
 header h1 {{
@@ -2650,6 +2729,8 @@ header h1 {{
     align-items: center;
     gap: 0;
     height: 52px;
+    /* Offset the SVG's built-in left-side viewBox whitespace. */
+    margin-left: -39px;
 }}
 
 .brand svg {{
@@ -2669,6 +2750,7 @@ header h1 {{
 
 header p {{
     margin: 0;
+    padding-left: 15px;
     color: var(--muted);
     font-size: 12px;
 }}
@@ -2804,30 +2886,80 @@ h2 {{
     font-size: 13px;
 }}
 
-select {{
+.team-picker {{
+    display: inline-block;
+    position: relative;
     margin-left: 6px;
+}}
+
+.team-native-select {{
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+}}
+
+.team-picker-button {{
     min-width: 126px;
     padding: 7px 30px 7px 9px;
     color: var(--text);
-    background-color: var(--card2);
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%2398a6bd' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 10px center;
+    background-color: var(--card);
     border: 1px solid var(--border);
     border-radius: 8px;
-    color-scheme: dark;
-    appearance: none;
-    -webkit-appearance: none;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
 }}
 
-select option {{
+.team-picker-button::after {{
+    content: "⌄";
+    position: absolute;
+    right: 10px;
+    color: var(--muted);
+}}
+
+.team-picker-button:hover,
+.team-picker-button:focus {{
+    border-color: var(--cyan);
+    outline: none;
+}}
+
+.team-picker-menu {{
+    position: absolute;
+    top: calc(100% + 5px);
+    right: 0;
+    z-index: 50;
+    min-width: 100%;
+    max-height: 300px;
+    overflow-y: auto;
+    padding: 4px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 12px 28px #0009;
+}}
+
+.team-picker-option {{
+    display: block;
+    width: 100%;
+    padding: 7px 9px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
     color: var(--text);
-    background: var(--card2);
+    font: inherit;
+    font-size: 12px;
+    text-align: left;
+    white-space: nowrap;
+    cursor: pointer;
 }}
 
-select:focus {{
-    outline: 1px solid var(--cyan);
-    outline-offset: 1px;
+.team-picker-option:hover,
+.team-picker-option:focus {{
+    background: #26365d;
+    color: var(--cyan);
+    outline: none;
 }}
 
 table {{
@@ -3112,7 +3244,7 @@ footer {{
     <div class="header-status">
         <p>
             {season} · Week {target_week} ·
-            Standard scoring · Generated {now}
+            League scoring · Generated {now}
         </p>
         <button class="refresh-button" type="button" id="refresh-dashboard">
             Load latest
@@ -3134,10 +3266,20 @@ footer {{
 
         <label class="team-filter" for="fantasy-team-filter">
             Fantasy team
-            <select id="fantasy-team-filter">
-                <option value="">All teams</option>
-                {team_options}
-            </select>
+            <span class="team-picker" id="team-picker">
+                <select class="team-native-select" id="fantasy-team-filter" tabindex="-1" aria-hidden="true">
+                    <option value="">All teams</option>
+                    {team_options}
+                </select>
+                <button class="team-picker-button" type="button"
+                    id="team-picker-button" aria-haspopup="listbox"
+                    aria-expanded="false">All teams</button>
+                <span class="team-picker-menu" id="team-picker-menu"
+                    role="listbox" hidden>
+                    <button class="team-picker-option" type="button" data-team="">All teams</button>
+                    {team_picker_options}
+                </span>
+            </span>
         </label>
     </div>
 
@@ -3154,8 +3296,8 @@ footer {{
                     <th data-sort="text">Player</th>
                     <th data-sort="text">Roster</th>
                     <th data-sort="number" title="Fantasy-point projection; the value in parentheses is the player-specific plus/minus estimate">Proj. Pts.</th>
-                    <th data-sort="number" title="Average actual standard-scoring fantasy points over the latest three included games">3-Wk Avg</th>
-                    <th class="spark-col" title="Recent six included games: actual fantasy points for consistency and weighted opportunity for role trend">3-Wk Trend</th>
+                    <th data-sort="number" title="Average actual league-scoring fantasy points over the latest three included games">3-Wk Avg</th>
+                    <th class="spark-col" title="Recent six included games: actual fantasy points for consistency and weighted opportunity for role trend">6-Wk Trend</th>
                     <th data-sort="number">Confidence</th>
                     <th data-sort="text">Trend signals</th>
                 </tr>
@@ -3210,16 +3352,16 @@ footer {{
     <h2>Model guide</h2>
 
     <div class="signal-guide">
+        <strong>Machine Learned-weight projection</strong><br>
+        When trained weights are available, Proj. Pts. uses a transparent regularized model trained on historical NFLverse player-weeks instead of the hand-set baseline mix. It learns how much each pre-game metric should raise or lower the next-week projection, including separate QB/RB/WR/TE adjustments. Run <code>python gptindex.py --learn-weights</code> to train or refresh it. The saved weight report ranks the learned metric weights; a future direct-ML projection will appear separately for comparison.<br><br>
         <strong>Scoring and projections</strong><br>
-        Fantasy points use the configured standard-scoring rules: passing yards ÷ 25, passing touchdowns × 4, interceptions × −2, rushing/receiving yards ÷ 10, rushing/receiving touchdowns × 6, receptions × 0, fumbles lost × −2, and two-point conversions × 2.<br><br>
+        Core league scoring: passing yards ÷ 25, passing touchdowns × 6, interceptions × −2, rushing/receiving yards ÷ 10, rushing/receiving touchdowns × 6, receptions × 0, fumbles lost × −2, and two-point conversions × 2. Return yards score 1 point per 25 yards, and 40+ yard passing/rushing/receiving touchdowns receive +1. Those return and 40+ touchdown details require play-by-play data and are not yet included in the weekly-player projection inputs.<br><br>
         <strong>Baseline projection</strong><br>
         45% exponentially weighted fantasy-point average + 25% three-game rolling average + 15% five-game rolling average + 15% season weighted average, then a capped opportunity-momentum adjustment and TD-dependence penalty.<br><br>
-        <strong>Learned-weight projection</strong><br>
-        When trained weights are available, Proj. Pts. uses a transparent regularized model trained on historical NFLverse player-weeks instead of the hand-set baseline mix. It learns how much each pre-game metric should raise or lower the next-week projection, including separate QB/RB/WR/TE adjustments. Run <code>python gptindex.py --learn-weights</code> to train or refresh it. The saved weight report ranks the learned metric weights; a future direct-ML projection will appear separately for comparison.<br><br>
         <strong>Carry-over history</strong><br>
         The last three games from the prior season are included before Week 1 so established players have useful rolling history. Current-season games remain the newest and most important observations.<br><br>
         <strong>3-Wk Avg and recent form</strong><br>
-        3-Wk Avg is the average of actual fantasy points from a player's latest three included games. The compact Pts and Opp sparklines show the latest six included games: Pts is actual fantasy scoring for consistency, while Opp is weighted opportunity from targets, carries, and offensive snap share.<br><br>
+        3-Wk Avg is the average of actual fantasy points from a player's latest three included games. The compact Pts and Opp sparklines show the latest six included games: Pts is actual fantasy scoring for consistency, while Opp is position-aware opportunity — passing attempts and rushing involvement for QBs, carries and targets for RBs, and targets for WRs/TEs.<br><br>
         <strong>Opportunity score</strong><br>
         Targets × 1.00 + carries × 0.55 + offensive snap percentage × 0.06 + red-zone targets × 1.40 + red-zone carries × 1.10. It is a role/usage measure, not a fantasy-point projection.<br><br>
         <strong>Momentum</strong><br>
@@ -3270,6 +3412,37 @@ refreshButton.addEventListener("click", function () {{
 
 const teamSelect = document.getElementById("fantasy-team-filter");
 const rosterTitle = document.getElementById("roster-title");
+const teamPicker = document.getElementById("team-picker");
+const teamPickerButton = document.getElementById("team-picker-button");
+const teamPickerMenu = document.getElementById("team-picker-menu");
+
+function closeTeamPicker() {{
+    teamPickerMenu.hidden = true;
+    teamPickerButton.setAttribute("aria-expanded", "false");
+}}
+
+teamPickerButton.addEventListener("click", function () {{
+    const willOpen = teamPickerMenu.hidden;
+    teamPickerMenu.hidden = !willOpen;
+    teamPickerButton.setAttribute("aria-expanded", String(willOpen));
+}});
+
+document.querySelectorAll(".team-picker-option").forEach(function (option) {{
+    option.addEventListener("click", function () {{
+        teamSelect.value = option.dataset.team;
+        teamPickerButton.textContent = option.textContent;
+        closeTeamPicker();
+        teamSelect.dispatchEvent(new Event("change"));
+    }});
+}});
+
+document.addEventListener("click", function (event) {{
+    if (!teamPicker.contains(event.target)) closeTeamPicker();
+}});
+
+document.addEventListener("keydown", function (event) {{
+    if (event.key === "Escape") closeTeamPicker();
+}});
 
 teamSelect.addEventListener("change", function () {{
     const selected = this.value;
@@ -4129,6 +4302,8 @@ def build_current_projections(
         stats,
         snaps,
     )
+    stats["source_season"] = stats["season"]
+    stats["source_week"] = stats["week"]
 
     # Use the final three weeks of last season as carry-over context. They
     # receive negative week numbers so they sort immediately before Week 1
@@ -4148,6 +4323,8 @@ def build_current_projections(
             .tail(3)
             .copy()
         )
+        prior_tail["source_season"] = prior_tail["season"]
+        prior_tail["source_week"] = prior_tail["week"]
         prior_tail["week"] = (
             prior_tail.groupby("player_id").cumcount()
             - prior_tail.groupby("player_id")["player_id"].transform("size")
