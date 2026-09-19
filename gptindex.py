@@ -4600,12 +4600,20 @@ def run_ml_holdout_validation(
         pd.Series("", index=holdout.index),
     ).fillna("").astype(str).str.upper()
     results = []
-    for position_group in ["All", "QB", "RB", "WR", "TE"]:
-        mask = (
-            pd.Series(True, index=holdout.index)
-            if position_group == "All"
-            else positions.eq(position_group)
-        )
+    position_groups = [
+        (
+            "Offense (QB/RB/WR/TE)",
+            positions.isin(OFFENSIVE_POSITIONS),
+        ),
+        ("QB", positions.eq("QB")),
+        ("RB", positions.eq("RB")),
+        ("WR", positions.eq("WR")),
+        ("TE", positions.eq("TE")),
+        # Keep this diagnostic row, but do not treat it as the main fantasy
+        # projection score: it includes positions without dedicated models.
+        ("All player records", pd.Series(True, index=holdout.index)),
+    ]
+    for position_group, mask in position_groups:
         for model_name, predicted in forecasts.items():
             results.append(
                 ml_holdout_metrics(
@@ -4619,7 +4627,7 @@ def run_ml_holdout_validation(
     report = pd.DataFrame(results)
     if not report.empty:
         report.to_csv(ML_HOLDOUT_REPORT_PATH, index=False)
-        print("\nUNSEEN-SEASON RESULTS — OVERALL AND BY POSITION")
+        print("\nUNSEEN-SEASON RESULTS — OFFENSE AND BY POSITION")
         print(
             report.to_string(
                 index=False,

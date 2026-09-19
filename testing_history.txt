@@ -7,8 +7,8 @@ The results below were generated before a confirmed feature over-lag was
 fixed. The old pipeline excluded the target week correctly, but also excluded
 the latest available prior-week game. Preserve these numbers as pre-correction
 context only; do not use them as the benchmark for future feature decisions.
-A corrected overall and position-by-position 2025 holdout must be run after
-the temporal regression test passes.
+A corrected position-by-position 2025 holdout was completed after the fix.
+The old aggregate rows remain pre-correction context only.
 
 Purpose
 -------
@@ -72,9 +72,43 @@ Dashboard correction made after this test:
     display correction does not change the holdout results above.
 
 Next planned validation:
-    1. Produce the 2025 holdout metrics by position.
-    2. Treat this report as the benchmark.
+    1. Produce an offensive-only aggregate in addition to the position rows.
+    2. Treat the corrected offensive and position results as the benchmark.
     3. Add one leakage-safe matchup feature group at a time.
     4. Re-run the same untouched-2025 test.
     5. Keep a new feature only when it improves relevant out-of-sample
        results without creating meaningful bias.
+
+
+2026-09-19 — Corrected temporal holdout, by position
+-----------------------------------------------------
+Command:
+    python index.py --validate-ml
+
+Correction applied before this run:
+    A Week W forecast now includes Week W-1 data and excludes Week W data.
+    The prior validation used one-game-stale features and is retained above
+    only as pre-correction context.
+
+2025 holdout results (trained 2018–2024):
+
+    Position  Best model                         Baseline MAE  Best MAE
+    --------  ---------------------------------  ------------  --------
+    QB        Machine Learned Points Projection       8.23       7.84
+    RB        Machine Learned Weight Values            4.24       4.01
+    WR        Machine Learned Points Projection        3.43       3.26
+    TE        Machine Learned Points Projection        2.83       2.67
+
+Notes:
+    * ML improved MAE and RMSE for every listed offensive position.
+    * The learned-weight model is still the primary Proj. Pts. forecast. It
+      is transparent, is best for RB, and is nearly tied with direct ML in
+      every other group.
+    * Do not select a different production model per position from one season
+      alone. Confirm the pattern with additional temporal folds first.
+    * The original "All" row contained 17,376 records, while QB/RB/WR/TE
+      contained 5,708. The remainder includes positions without dedicated
+      offensive models and can artificially lower aggregate error. The
+      validator now reports an explicit "Offense (QB/RB/WR/TE)" aggregate as
+      the primary overall score, while retaining "All player records" as a
+      diagnostic row.

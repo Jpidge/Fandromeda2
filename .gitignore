@@ -1,3 +1,8 @@
+data/my_roster.txt
+data/cache/
+data/output/roster_mapping.csv
+data/output/projections.csv
+data/output/waiver_candidates.csv
 .env 
 config.json 
 oauth_tokens.json 
