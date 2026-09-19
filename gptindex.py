@@ -97,6 +97,9 @@ ROSTER_FILE = DATA_DIR / "my_roster.txt"
 HTML_OUTPUT = Path("index.html")
 LEARNED_WEIGHT_MODEL_PATH = CACHE_DIR / "learned_weight_model.json"
 LEARNED_WEIGHT_REPORT_PATH = OUTPUT_DIR / "learned_metric_weights.csv"
+DIRECT_ML_MODEL_PATH = CACHE_DIR / "direct_ml_model.json"
+DIRECT_ML_METADATA_PATH = CACHE_DIR / "direct_ml_model_metadata.json"
+ML_HOLDOUT_REPORT_PATH = OUTPUT_DIR / "ml_holdout_validation.csv"
 
 # YOUR LEAGUE
 LEAGUE_TEAMS = 12
@@ -1124,7 +1127,9 @@ def load_current_injury_status(
         force=True,
     )
     if raw.empty:
-        return pd.DataFrame(columns=["player_id", "injury_flag", "injury_note"])
+        return pd.DataFrame(
+            columns=["player_id", "injury_flag", "injury_note", "season_ending"]
+        )
 
     aliases = {
         "player_id": ["gsis_id", "player_id", "nfl_id"],
@@ -1139,7 +1144,9 @@ def load_current_injury_status(
     }
     injuries = rename_if_present(to_pandas(raw), aliases)
     if "player_id" not in injuries or "status" not in injuries:
-        return pd.DataFrame(columns=["player_id", "injury_flag", "injury_note"])
+        return pd.DataFrame(
+            columns=["player_id", "injury_flag", "injury_note", "season_ending"]
+        )
 
     for column in ["week", "status", "injury", "updated"]:
         if column not in injuries:
@@ -1164,7 +1171,9 @@ def load_current_injury_status(
     injuries["injury_flag"] = injuries["status"].map(flag_for_status)
     injuries = injuries[injuries["injury_flag"] != ""].copy()
     if injuries.empty:
-        return pd.DataFrame(columns=["player_id", "injury_flag", "injury_note"])
+        return pd.DataFrame(
+            columns=["player_id", "injury_flag", "injury_note", "season_ending"]
+        )
 
     injuries["injury_note"] = injuries.apply(
         lambda row: " · ".join(
@@ -1172,11 +1181,20 @@ def load_current_injury_status(
         ),
         axis=1,
     )
+    injury_text = injuries["status"] + " " + injuries["injury"]
+    injuries["season_ending"] = injury_text.str.contains(
+        r"OUT FOR SEASON|SEASON[- ]ENDING",
+        case=False,
+        regex=True,
+        na=False,
+    )
     return (
         injuries
         .sort_values(["player_id", "week", "updated"])
         .groupby("player_id", as_index=False)
-        .tail(1)[["player_id", "injury_flag", "injury_note"]]
+        .tail(1)[
+            ["player_id", "injury_flag", "injury_note", "season_ending"]
+        ]
     )
 
 
@@ -1259,16 +1277,19 @@ def load_snaps(season: int) -> pd.DataFrame:
 
 
 def load_depth_charts(season: int) -> pd.DataFrame:
+    """Load the latest depth-chart snapshots for the active season."""
 
     raw = load_cached(
         f"depth_charts_{season}",
         lambda: nfl.load_depth_charts(season),
+        # Depth charts change with injuries and weekly roster moves.
+        force=True,
     )
 
     if raw.empty:
         return raw
 
-    df = raw.copy()
+    df = to_pandas(raw).copy()
 
     df = rename_if_present(
         df,
@@ -1284,19 +1305,194 @@ def load_depth_charts(season: int) -> pd.DataFrame:
                 "club_code",
             ],
             "position": [
+                "pos_abb",
                 "position",
+                "pos_id",
                 "pos",
             ],
-            "depth": [
+            "depth_rank": [
+                "pos_rank",
+                "depth_rank",
                 "depth",
                 "depth_position",
                 "depth_order",
             ],
+            "updated": ["dt", "updated_at", "date"],
         },
     )
 
     if "team" in df:
         df["team"] = df["team"].map(normalize_team)
+
+    if "position" in df:
+        df["position"] = df["position"].map(clean_text).str.upper()
+    if "depth_rank" in df:
+        raw_rank = df["depth_rank"].astype(str)
+        numeric_rank = pd.to_numeric(raw_rank, errors="coerce")
+        embedded_rank = pd.to_numeric(
+            raw_rank.str.extract(r"(\d+)", expand=False),
+            errors="coerce",
+        )
+        df["depth_rank"] = numeric_rank.fillna(embedded_rank)
+    if "updated" in df:
+        df["updated"] = pd.to_datetime(df["updated"], errors="coerce")
+
+    return df
+
+
+def build_depth_context(
+    depth_charts: pd.DataFrame,
+    injury_status: pd.DataFrame,
+) -> pd.DataFrame:
+    """Classify starters, healthy backups, and injury-driven promotions."""
+
+    columns = [
+        "player_id", "depth_rank", "depth_role", "depth_note",
+        "depth_adjustment",
+    ]
+    if depth_charts.empty or not {
+        "player_id", "team", "position", "depth_rank"
+    }.issubset(depth_charts.columns):
+        return pd.DataFrame(columns=columns)
+
+    depth = depth_charts.copy()
+    depth["player_id"] = depth["player_id"].map(clean_text)
+    depth = depth[
+        depth["player_id"].ne("")
+        & depth["position"].isin(["QB", "RB", "WR", "TE"])
+        & depth["depth_rank"].notna()
+    ].copy()
+    if depth.empty:
+        return pd.DataFrame(columns=columns)
+
+    if "updated" not in depth:
+        depth["updated"] = pd.NaT
+    depth = (
+        depth.sort_values(["player_id", "updated"])
+        .groupby("player_id", as_index=False)
+        .tail(1)
+        .copy()
+    )
+
+    unavailable = {}
+    season_ending = {}
+    if not injury_status.empty:
+        for _, row in injury_status.iterrows():
+            player_id = clean_text(row.get("player_id", ""))
+            if player_id:
+                unavailable[player_id] = clean_text(row.get("injury_flag", ""))
+                season_ending[player_id] = bool(row.get("season_ending", False))
+
+    records = []
+    for _, group in depth.groupby(["team", "position"], dropna=False):
+        group = group.sort_values("depth_rank")
+        for _, row in group.iterrows():
+            player_id = clean_text(row["player_id"])
+            rank = safe_float(row["depth_rank"], np.nan)
+            higher = group[group["depth_rank"] < rank]
+            unavailable_higher = higher[
+                higher["player_id"].map(
+                    lambda value: clean_text(value) in unavailable
+                )
+            ]
+            healthy_higher = higher[
+                ~higher["player_id"].map(
+                    lambda value: clean_text(value) in unavailable
+                )
+            ]
+            player_unavailable = player_id in unavailable
+            role = "starter" if rank <= 1 else "backup"
+            note = f"Depth chart: {row['position']}{rank:.0f}."
+            adjustment = ""
+
+            if player_unavailable:
+                role = "unavailable"
+                note = f"{note} Player is currently {unavailable[player_id]}."
+            elif rank > 1 and not unavailable_higher.empty and healthy_higher.empty:
+                if any(
+                    season_ending.get(clean_text(value), False)
+                    for value in unavailable_higher["player_id"]
+                ):
+                    role = "replacement"
+                    note = (
+                        f"{note} Higher-ranked teammate is explicitly "
+                        "reported out for the season."
+                    )
+                else:
+                    role = "temporary_surge"
+                    note = (
+                        f"{note} Temporary starter while a higher-ranked "
+                        "teammate is O/IR."
+                    )
+            elif rank > 1 and not healthy_higher.empty:
+                role = "backup"
+                adjustment = "healthy_backup"
+                note = (
+                    f"{note} Higher-ranked teammate is active; recent usage "
+                    "is not treated as a starting role."
+                )
+
+            records.append(
+                {
+                    "player_id": player_id,
+                    "depth_rank": rank,
+                    "depth_role": role,
+                    "depth_note": note,
+                    "depth_adjustment": adjustment,
+                }
+            )
+
+    return pd.DataFrame(records, columns=columns)
+
+
+def apply_depth_context(
+    projections: pd.DataFrame,
+    depth_context: pd.DataFrame,
+) -> pd.DataFrame:
+    """Keep healthy non-starters from receiving starter-level forecasts."""
+
+    if projections.empty:
+        return projections
+    if depth_context.empty:
+        df = projections.copy()
+        df["depth_role"] = ""
+        df["depth_note"] = "Depth-chart context unavailable."
+        df["depth_adjustment"] = ""
+        return df
+
+    df = projections.merge(
+        depth_context,
+        on="player_id",
+        how="left",
+    )
+    for column in ["depth_role", "depth_note", "depth_adjustment"]:
+        df[column] = df[column].fillna("")
+
+    # A healthy QB2 is not expected to play unless a starter is unavailable.
+    # RB2/3, WR2/3, and TE2 can have intentional weekly roles, so depth rank
+    # alone remains context for those positions rather than an automatic cut.
+    backup_caps = {"QB": 0.0}
+    for index, row in df.iterrows():
+        if clean_text(row.get("depth_adjustment")) != "healthy_backup":
+            continue
+        cap = backup_caps.get(clean_text(row.get("position")).upper())
+        if cap is None:
+            continue
+        for column in ["projection", "baseline_projection", "ml_projection"]:
+            if column in df:
+                value = safe_float(df.at[index, column], np.nan)
+                if np.isfinite(value):
+                    df.at[index, column] = min(value, cap)
+        if cap == 0:
+            df.at[index, "range_low"] = 0.0
+            df.at[index, "range_high"] = 0.0
+        else:
+            df.at[index, "range_low"] = min(
+                safe_float(df.at[index, "range_low"], 0), cap
+            )
+            df.at[index, "range_high"] = min(
+                safe_float(df.at[index, "range_high"], cap), cap + 2.0
+            )
 
     return df
 
@@ -1929,13 +2125,13 @@ def project_baseline(features: pd.DataFrame) -> pd.DataFrame:
             production_momentum < -1
             and opportunity_momentum < -1
         ):
-            label = "Usage decline"
+            label = "Downtrend confirmed"
 
         elif (
             production_momentum > 1
             and opportunity_momentum > 1
         ):
-            label = "Production + usage rising"
+            label = "Momentum confirmed"
 
         elif (
             production_momentum > 1
@@ -2351,21 +2547,27 @@ def signal_tooltip(row: pd.Series) -> str:
 
     definitions = {
         "Emerging opportunity": (
-            "Opportunity is rising faster than production."
+            "Opportunity is rising faster than production (opportunity "
+            "momentum > 2 and trend gap > 1)."
         ),
         "TD-dependent production": (
             "Recent scoring relies heavily on touchdowns."
         ),
-        "Usage decline": (
-            "Both opportunity and production are declining."
+        "Downtrend confirmed": (
+            "Role/usage is declining and fantasy production is falling with it."
         ),
-        "Production + usage rising": (
-            "Both opportunity and production are improving."
+        "Momentum confirmed": (
+            "Role/usage is improving and fantasy production is already "
+            "following it."
         ),
         "Efficiency / regression watch": (
             "Production is rising while opportunity is falling."
         ),
-        "Stable": "No material positive or negative trend signal.",
+        "Stable": (
+            "No confirmed overall trend. Individual chips can still show a "
+            "recent production or usage move when the evidence is mixed, "
+            "modest, or does not meet a combined rule."
+        ),
     }
 
     return (
@@ -2409,10 +2611,10 @@ def confidence_tooltip(row: pd.Series) -> str:
 def signal_chip_class(signal: str) -> str:
     return {
         "Emerging opportunity": "chip-teal",
-        "Production + usage rising": "chip-blue",
+        "Momentum confirmed": "chip-blue",
         "TD-dependent production": "chip-violet",
         "Efficiency / regression watch": "chip-rose",
-        "Usage decline": "chip-gold",
+        "Downtrend confirmed": "chip-gold",
         "Stable": "chip-gray",
     }.get(clean_text(signal), "chip-gray")
 
@@ -2454,6 +2656,7 @@ def build_html(
     projections: pd.DataFrame,
     history: pd.DataFrame,
     injury_status: pd.DataFrame,
+    depth_context: pd.DataFrame,
     waiver: pd.DataFrame,
     unmatched: pd.DataFrame,
     season: int,
@@ -2495,6 +2698,9 @@ def build_html(
                 "player_id",
                 "projection",
                 "baseline_projection",
+                "ml_projection",
+                "depth_role",
+                "depth_note",
                 "range_low",
                 "range_high",
                 "confidence",
@@ -2526,6 +2732,12 @@ def build_html(
         injury_by_player = {
             str(row["player_id"]): row
             for _, row in injury_status.iterrows()
+        }
+    depth_by_player = {}
+    if not depth_context.empty:
+        depth_by_player = {
+            str(row["player_id"]): row
+            for _, row in depth_context.iterrows()
         }
     if not history.empty and {"player_id", "week", "fantasy_points_std"}.issubset(history.columns):
         recent_actual = (
@@ -2574,6 +2786,7 @@ def build_html(
             )
         else:
             projection_display = fmt(projection)
+        ml_projection_display = fmt(row.get("ml_projection"))
 
         player_id = clean_text(row.get("nflverse_player_id", ""))
         injury = injury_by_player.get(player_id)
@@ -2586,6 +2799,26 @@ def build_html(
                 f'<span class="injury-flag {badge_class}" tabindex="0" '
                 f'data-tooltip="{note}">{html.escape(flag)}</span>'
             )
+        depth = depth_by_player.get(player_id)
+        depth_badge = ""
+        if depth is not None:
+            role = clean_text(depth.get("depth_role", ""))
+            note = html_escape(depth.get("depth_note", ""))
+            if role == "temporary_surge":
+                depth_badge = (
+                    f'<span class="role-flag role-temporary" tabindex="0" '
+                    f'data-tooltip="{note}">TEMP</span>'
+                )
+            elif (
+                role == "backup"
+                and clean_text(depth.get("depth_adjustment", ""))
+                == "healthy_backup"
+                and clean_text(row.get("position", "")).upper() == "QB"
+            ):
+                depth_badge = (
+                    f'<span class="role-flag role-backup" tabindex="0" '
+                    f'data-tooltip="{note}">BACKUP</span>'
+                )
         production_spark, opportunity_spark = player_sparklines(
             history,
             player_id,
@@ -2646,6 +2879,8 @@ def build_html(
                         data-position="{html_escape(row.get('position', ''))}"
                         data-team="{html_escape(row.get('team', ''))}"
                         data-projection="{projection_display}"
+                        data-ml-projection="{ml_projection_display}"
+                        data-role-context="{html_escape(row.get('depth_note', ''))}"
                         data-confidence="{confidence_display}"
                         data-signal="{html_escape(row.get('classification', '—'))}"
                         data-fantasy-ewma="{fmt(row.get('fantasy_points_ewma'))}"
@@ -2661,6 +2896,7 @@ def build_html(
                         {html_escape(row.get("player", ""))}
                     </button>
                     {injury_badge}
+                    {depth_badge}
                     <span class="player-team">
                         ({html_escape(row.get("team", ""))} —
                         {html_escape(row.get("position", ""))})
@@ -2668,6 +2904,7 @@ def build_html(
                 </td>
                 <td>{html_escape(row.get("slot", ""))}</td>
                 <td class="projection-col">{projection_display}</td>
+                <td class="projection-col">{ml_projection_display}</td>
                 <td>
                     <span class="hover-value" tabindex="0"
                         data-tooltip="{average_tooltip}">
@@ -2780,6 +3017,7 @@ def build_html(
     --border: #2a3557;
     --accent: #8a6cff;
     --cyan: #2ee6d6;
+    --violet: #a88cff;
     --magenta: #f06bb8;
 }}
 
@@ -2818,13 +3056,23 @@ header h1 {{
     align-items: center;
     gap: 0;
     height: 52px;
-    /* Offset the SVG's built-in left-side viewBox whitespace. */
+    padding-left: 6px;
+}}
+
+.brand svg:not(.brand-mark) {{
+    width: 300px;
+    height: 52px;
+    /* Offset the source SVG's built-in left-side viewBox whitespace. */
     margin-left: -39px;
 }}
 
-.brand svg {{
-    width: 300px;
-    height: 52px;
+.brand-mark {{
+    display: inline-block;
+    flex: 0 0 32px;
+    width: 32px !important;
+    height: 18px !important;
+    margin-right: 2px;
+    transform: translateY(-1px);
 }}
 
 .brand-suffix {{
@@ -2847,6 +3095,8 @@ header p {{
     display: flex;
     align-items: center;
     gap: 10px;
+    /* Match the wordmark's visible left edge after its SVG viewBox offset. */
+    padding-left: 9px;
 }}
 
 .refresh-button {{
@@ -3217,6 +3467,23 @@ table.sortable td:first-child {{
 .injury-out {{ background: #f06b78; }}
 .injury-ir {{ background: #f4c95d; }}
 
+.role-flag {{
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 4px;
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-size: 8px;
+    font-weight: 900;
+    letter-spacing: 0.03em;
+    line-height: 1;
+    vertical-align: middle;
+}}
+
+.role-temporary {{ color: #1b1225; background: #c59aff; }}
+.role-backup {{ color: #0d1a1e; background: #76d8ef; }}
+
 .projection-col,
 .confidence-col {{
     white-space: nowrap;
@@ -3355,6 +3622,11 @@ footer {{
 
 <header>
     <h1 class="brand" aria-label="{APP_NAME}">
+        <svg class="brand-mark" width="32" height="18" viewBox="0 0 32 18" aria-hidden="true">
+            <rect x="0" y="12" width="8" height="6" rx="1" fill="var(--cyan)" />
+            <rect x="12" y="6" width="8" height="12" rx="1" fill="var(--violet)" />
+            <rect x="24" y="0" width="8" height="18" rx="1" fill="var(--magenta)" />
+        </svg>
         {wordmark_svg}
         <span class="brand-suffix">2</span>
     </h1>
@@ -3414,6 +3686,7 @@ footer {{
                     <th data-sort="roster" data-direction="yahoo"
                         title="Click to cycle: Yahoo roster order, ascending, descending">Roster</th>
                     <th class="projection-col" data-sort="number" title="Fantasy-point projection; the value in parentheses is the player-specific plus/minus estimate">Proj. Pts.</th>
+                    <th class="projection-col" data-sort="number" title="Separate direct XGBoost next-week forecast. It is shown for comparison and does not replace Proj. Pts.">ML Proj.</th>
                     <th data-sort="number" title="Average actual league-scoring fantasy points over the latest three included games">3-Wk Avg</th>
                     <th data-sort="text">Trend signals</th>
                     <th class="spark-col" title="Recent six included games: actual fantasy points for consistency and weighted opportunity for role trend">6-Wk Trend</th>
@@ -3426,13 +3699,13 @@ footer {{
     </div>
 
     <div class="signal-guide">
-        <strong>Signal guide — 6 signals.</strong><br>
+        <strong>Signal guide — component signals.</strong><br>
         Emerging opportunity: opportunity momentum &gt; 2 and trend gap &gt; 1.<br>
         TD-dependent production: TD dependence &gt; 55% with positive production momentum.<br>
-        Usage decline: opportunity and production momentum both below −1.<br>
-        Production + usage rising: both momentum measures above 1.<br>
+        Downtrend confirmed: both opportunity and production momentum are below −1.<br>
+        Momentum confirmed: both opportunity and production momentum are above 1.<br>
         Efficiency / regression watch: production momentum above 1 while opportunity momentum is below −1.<br>
-        Stable: none of the conditions above. Hover a row's signal for its actual component values.
+        Stable: no confirmed overall pattern. Individual component chips may still appear when production and usage disagree, the movement is modest, or a combined rule is not met. Hover a row's signal for its actual component values and explanation.
     </div>
 </section>
 
@@ -3469,8 +3742,14 @@ footer {{
     <h2>Model guide</h2>
 
     <div class="signal-guide">
-        <strong>Machine Learned-weight projection</strong><br>
-        When trained weights are available, Proj. Pts. uses a transparent regularized model trained on historical NFLverse player-weeks instead of the hand-set baseline mix. It learns how much each pre-game metric should raise or lower the next-week projection, including separate QB/RB/WR/TE adjustments. Run <code>python gptindex.py --learn-weights</code> to train or refresh it. The saved weight report ranks the learned metric weights; a future direct-ML projection will appear separately for comparison.<br><br>
+        <strong>Which projection is shown?</strong><br>
+        Fandromeda calculates three forecasts. <strong>Proj. Pts.</strong> uses Machine Learned Weight Values when saved learned weights are available; otherwise it uses the transparent Baseline projection. <strong>ML Proj.</strong> is the separate direct Machine Learned Points Projection shown for comparison only. It never silently replaces Proj. Pts.<br><br>
+        <strong>Machine Learned Points Projection</strong><br>
+        A separate XGBoost model trained on historical, leakage-safe player-weeks to predict next-week fantasy points directly. It considers the same pre-game history plus position indicators; it is a comparison forecast and does not replace Proj. Pts. A dash means the direct model has not been trained or is unavailable on this computer.<br><br>
+        <strong>Machine Learned Weight Values</strong><br>
+        When trained weights are available, Proj. Pts. uses a transparent regularized model trained on historical NFLverse player-weeks instead of the hand-set baseline mix. It learns how much each pre-game metric should raise or lower the next-week projection, including separate QB/RB/WR/TE adjustments. Run <code>python gptindex.py --learn-weights</code> to train or refresh it. The saved weight report ranks the learned metric weights; it remains separate from Machine Learned Points Projection.<br><br>
+        <strong>Projection (±)</strong><br>
+        Weekly fantasy-point projection followed by a player-specific plus/minus estimate. The estimate is 1.15 × the model's recent-volatility measure; it is a planning guide, not a guarantee or formal confidence interval.<br><br>
         <strong>Scoring and projections</strong><br>
         Core league scoring: passing yards ÷ 25, passing touchdowns × 6, interceptions × −2, rushing/receiving yards ÷ 10, rushing/receiving touchdowns × 6, receptions × 0, fumbles lost × −2, and two-point conversions × 2. Return yards score 1 point per 25 yards, and 40+ yard passing/rushing/receiving touchdowns receive +1. Those return and 40+ touchdown details require play-by-play data and are not yet included in the weekly-player projection inputs.<br><br>
         <strong>Baseline projection</strong><br>
@@ -3482,24 +3761,17 @@ footer {{
         <strong>Opportunity score</strong><br>
         Targets × 1.00 + carries × 0.55 + offensive snap percentage × 0.06 + red-zone targets × 1.40 + red-zone carries × 1.10. It is a role/usage measure, not a fantasy-point projection.<br><br>
         <strong>Momentum</strong><br>
-        Recent two-game average minus the preceding two-game average. Opportunity momentum uses the opportunity components; production momentum uses fantasy points.<br><br>
+        The latest two-game average minus the preceding two-game average. For example, a 10-point average in the earlier two games and a 15-point average in the latest two produces +5 production momentum. Opportunity momentum uses role/usage components; production momentum uses fantasy points. It reacts quickly to a recent change, while the 6-Wk Trend lines show the broader shape and consistency of the player’s recent history.<br><br>
         <strong>Trend gap</strong><br>
         Opportunity momentum − production momentum. A positive value means role growth is outpacing scoring; a negative value means scoring is outpacing role growth.<br><br>
         <strong>TD dependence</strong><br>
         Touchdown fantasy points ÷ total fantasy points, using the exponentially weighted averages. Higher values imply greater risk of regression when touchdowns slow down.<br><br>
-        <strong>Projection (±)</strong><br>
-        Weekly fantasy-point projection followed by a player-specific plus/minus estimate. The estimate is 1.15 × the model's recent-volatility measure; it is a planning guide, not a guarantee or formal confidence interval.<br><br>
+        <strong>Depth-chart context</strong><br>
+        Live depth-chart rank and Out/IR teammate status help identify real starters, healthy backups, and temporary replacements. A healthy QB2 is projected for 0 unless the QB1 is unavailable; RB/WR/TE depth status is context only because those players often have planned roles. A TEMP flag means recent usage is likely injury-driven; it remains valid for the next matchup while the higher-ranked teammate is unavailable, then resets automatically when that player returns. IR is treated as season-ending only when the feed explicitly says so.<br><br>
         <strong>Confidence</strong><br>
         An internal 20–90 consistency score, not a probability. It starts at 50, then adds capped consistency (12 − volatility) and capped opportunity; it is shown in player details rather than the main table and is withheld as “Early season” until at least three included games are available.
     </div>
 
-    <div class="signal-guide">
-        <strong>Model philosophy</strong><br>
-        <strong>Production</strong> — recent fantasy scoring is the foundation.<br>
-        <strong>Opportunity</strong> — targets, carries, snap share, and red-zone work can reveal changes before fantasy production catches up.<br>
-        <strong>Sustainability</strong> — touchdown dependence and production relative to opportunity flag possible regression.<br>
-        <strong>Leakage protection</strong> — features use only games before the week being projected.
-    </div>
 </section>
 
 {unmatched_html}
@@ -3679,6 +3951,8 @@ document.querySelectorAll(".player-link").forEach(function (button) {{
 
         const metrics = [
             ["Projection", data.projection],
+            ["Direct ML projection", data.mlProjection],
+            ["Depth-chart context", data.roleContext],
             ["Confidence", data.confidence],
             ["Fantasy EWMA", data.fantasyEwma],
             ["Fantasy rolling 3", data.fantasyRoll3],
@@ -3964,98 +4238,83 @@ def apply_learned_weight_model(
     return current
 
 
-def try_ml_projection(
+DIRECT_ML_FEATURES = [
+    "fantasy_points_last", "fantasy_points_roll2", "fantasy_points_roll3",
+    "fantasy_points_roll5", "fantasy_points_ewma", "targets_last",
+    "targets_roll2", "targets_roll3", "targets_roll5", "targets_ewma",
+    "carries_last", "carries_roll2", "carries_roll3", "carries_roll5",
+    "carries_ewma", "receiving_yards_ewma", "rushing_yards_ewma",
+    "offense_snaps_ewma", "offense_pct_ewma", "td_points_ewma",
+    "opportunity_score", "opportunity_momentum", "production_momentum",
+    "trend_gap", "td_dependency",
+]
+DIRECT_ML_POSITION_FEATURES = [
+    "position_qb", "position_rb", "position_wr", "position_te",
+]
+
+
+def direct_ml_feature_frame(
+    df: pd.DataFrame,
+    feature_names: Optional[List[str]] = None,
+) -> Tuple[pd.DataFrame, List[str]]:
+    """Create only pre-game inputs for the direct next-week ML forecast."""
+
+    frame = df.copy()
+    positions = frame.get(
+        "position", pd.Series("", index=frame.index)
+    ).fillna("").astype(str).str.upper()
+    for position in ["QB", "RB", "WR", "TE"]:
+        frame[f"position_{position.lower()}"] = (
+            positions == position
+        ).astype(float)
+
+    if feature_names is None:
+        feature_names = [
+            feature for feature in DIRECT_ML_FEATURES
+            if feature in frame.columns
+        ] + DIRECT_ML_POSITION_FEATURES
+
+    for feature in feature_names:
+        if feature not in frame.columns:
+            frame[feature] = 0.0
+
+    return (
+        frame[feature_names]
+        .replace([np.inf, -np.inf], np.nan)
+        .apply(pd.to_numeric, errors="coerce")
+        .fillna(0.0),
+        feature_names,
+    )
+
+
+def train_direct_ml_model(
     train_df: pd.DataFrame,
-    current_df: pd.DataFrame,
-) -> Optional[pd.DataFrame]:
+    season: int,
+) -> bool:
+    """Train and persist the separate direct next-week point forecast."""
 
-    """
-    Optional XGBoost model.
-
-    It is deliberately optional for beta v1.
-
-    If xgboost isn't installed, baseline projections continue
-    working.
-    """
+    if train_df.empty or "target_next_week" not in train_df:
+        print("No usable historical examples were available for direct ML.")
+        return False
 
     try:
         from xgboost import XGBRegressor
     except ImportError:
-        print(
-            "\nXGBoost not installed — using baseline model."
-        )
-        print(
-            "Optional: pip install xgboost"
-        )
-        return None
+        print("\nXGBoost is needed for the direct ML forecast.")
+        print("Install it once with: pip install xgboost")
+        return False
 
-    if train_df.empty or current_df.empty:
-        return None
-
-    feature_candidates = [
-        "fantasy_points_last",
-        "fantasy_points_roll2",
-        "fantasy_points_roll3",
-        "fantasy_points_roll5",
-        "fantasy_points_ewma",
-
-        "targets_last",
-        "targets_roll2",
-        "targets_roll3",
-        "targets_roll5",
-        "targets_ewma",
-
-        "carries_last",
-        "carries_roll2",
-        "carries_roll3",
-        "carries_roll5",
-        "carries_ewma",
-
-        "receiving_yards_ewma",
-        "rushing_yards_ewma",
-
-        "offense_snaps_ewma",
-        "offense_pct_ewma",
-
-        "td_points_ewma",
-
-        "opportunity_score",
-        "opportunity_momentum",
-        "production_momentum",
-        "trend_gap",
-        "td_dependency",
-    ]
-
-    features = [
-        col
-        for col in feature_candidates
-        if col in train_df.columns
-        and col in current_df.columns
-    ]
-
-    if len(features) < 5:
-        return None
-
-    train = train_df.copy()
-    current = current_df.copy()
-
-    train = train[
-        train["target_next_week"].notna()
+    train = train_df[
+        train_df["target_next_week"].notna()
     ].copy()
-
     if len(train) < 500:
-        print(
-            "Not enough training examples for ML yet."
-        )
-        return None
+        print("Not enough training examples for direct ML yet.")
+        return False
 
-    X = (
-        train[features]
-        .replace([np.inf, -np.inf], np.nan)
-        .fillna(0)
-    )
-
-    y = train["target_next_week"]
+    X_train, features = direct_ml_feature_frame(train)
+    if len(features) < 5:
+        print("Not enough usable pre-game features for direct ML.")
+        return False
 
     model = XGBRegressor(
         n_estimators=350,
@@ -4066,20 +4325,63 @@ def try_ml_projection(
         objective="reg:squarederror",
         random_state=42,
     )
+    model.fit(X_train, train["target_next_week"])
 
-    model.fit(X, y)
+    try:
+        model.save_model(str(DIRECT_ML_MODEL_PATH))
+        DIRECT_ML_METADATA_PATH.write_text(
+            json.dumps(
+                {
+                    "features": features,
+                    "training_examples": int(len(train)),
+                    "trained_for_season": int(season),
+                    "model_type": "XGBoost direct next-week forecast",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except (OSError, ValueError) as exc:
+        print(f"WARNING: unable to save direct ML model: {exc}")
+        return False
 
-    X_current = (
-        current[features]
-        .replace([np.inf, -np.inf], np.nan)
-        .fillna(0)
+    print(
+        f"Saved direct ML forecast trained on {len(train):,} player-weeks."
     )
+    return True
 
-    current["ml_projection"] = model.predict(
-        X_current
-    )
 
-    return current
+def apply_saved_direct_ml_model(
+    current_df: pd.DataFrame,
+) -> Optional[pd.DataFrame]:
+    """Apply a saved ML model without changing the primary projection."""
+
+    if (
+        current_df.empty
+        or not DIRECT_ML_MODEL_PATH.exists()
+        or not DIRECT_ML_METADATA_PATH.exists()
+    ):
+        return None
+
+    try:
+        from xgboost import XGBRegressor
+        metadata = json.loads(
+            DIRECT_ML_METADATA_PATH.read_text(encoding="utf-8")
+        )
+        features = metadata["features"]
+        if not isinstance(features, list) or not features:
+            return None
+        model = XGBRegressor()
+        model.load_model(str(DIRECT_ML_MODEL_PATH))
+        X_current, _ = direct_ml_feature_frame(current_df, features)
+        current = current_df.copy()
+        current["ml_projection"] = np.maximum(
+            0.0, model.predict(X_current)
+        )
+        return current
+    except Exception as exc:
+        print(f"WARNING: direct ML forecast unavailable: {exc}")
+        return None
 
 
 # ============================================================
@@ -4202,6 +4504,144 @@ def build_walk_forward_training(
         all_examples,
         ignore_index=True,
     )
+
+
+def ml_holdout_metrics(
+    model_name: str,
+    actual: pd.Series,
+    predicted: pd.Series,
+    position_group: str = "All",
+) -> Dict:
+    """Score a forecast only where both prediction and outcome are known."""
+
+    # XGBoost returns a NumPy array while the other forecast layers return
+    # Series.  Normalize both inputs to aligned Series before using pandas
+    # missing-value helpers.
+    actual_values = pd.to_numeric(
+        pd.Series(actual).reset_index(drop=True),
+        errors="coerce",
+    )
+    predicted_values = pd.to_numeric(
+        pd.Series(predicted).reset_index(drop=True),
+        errors="coerce",
+    )
+    valid = actual_values.notna() & predicted_values.notna()
+    if not valid.any():
+        return {
+            "position": position_group,
+            "model": model_name,
+            "examples": 0,
+        }
+
+    error = predicted_values[valid] - actual_values[valid]
+    absolute_error = error.abs()
+    return {
+        "position": position_group,
+        "model": model_name,
+        "examples": int(valid.sum()),
+        "mae": float(absolute_error.mean()),
+        "rmse": float(np.sqrt(np.mean(np.square(error)))),
+        "bias": float(error.mean()),
+        "within_3_points": float((absolute_error <= 3).mean()),
+        "within_5_points": float((absolute_error <= 5).mean()),
+    }
+
+
+def run_ml_holdout_validation(
+    train_seasons: List[int],
+    holdout_season: int,
+) -> pd.DataFrame:
+    """Evaluate all forecast layers on one untouched, later season."""
+
+    print(
+        f"\nML holdout validation: train {min(train_seasons)}-"
+        f"{max(train_seasons)}, test {holdout_season}."
+    )
+    training = build_walk_forward_training(train_seasons)
+    holdout = build_walk_forward_training([holdout_season])
+    if training.empty or holdout.empty:
+        print("Holdout validation could not build enough historical examples.")
+        return pd.DataFrame()
+
+    # This creates the same transparent baseline each historical week would
+    # have had before seeing that week's actual points.
+    holdout = project_baseline(holdout)
+    actual = holdout["target_next_week"]
+    forecasts = {
+        "Baseline projection": holdout["baseline_projection"],
+    }
+
+    learned_model, _ = train_learned_weight_model(training)
+    if learned_model is not None:
+        learned_holdout = apply_learned_weight_model(learned_model, holdout)
+        forecasts["Machine Learned Weight Values"] = learned_holdout[
+            "learned_weight_projection"
+        ]
+
+    try:
+        from xgboost import XGBRegressor
+
+        direct_train = training[
+            training["target_next_week"].notna()
+        ].copy()
+        X_train, features = direct_ml_feature_frame(direct_train)
+        X_holdout, _ = direct_ml_feature_frame(holdout, features)
+        model = XGBRegressor(
+            n_estimators=350,
+            max_depth=5,
+            learning_rate=0.035,
+            subsample=0.85,
+            colsample_bytree=0.85,
+            objective="reg:squarederror",
+            random_state=42,
+        )
+        model.fit(X_train, direct_train["target_next_week"])
+        forecasts["Machine Learned Points Projection"] = pd.Series(
+            np.maximum(0.0, model.predict(X_holdout)),
+            index=holdout.index,
+        )
+    except ImportError:
+        print("XGBoost is unavailable; direct ML is omitted from this test.")
+
+    positions = holdout.get(
+        "position",
+        pd.Series("", index=holdout.index),
+    ).fillna("").astype(str).str.upper()
+    results = []
+    for position_group in ["All", "QB", "RB", "WR", "TE"]:
+        mask = (
+            pd.Series(True, index=holdout.index)
+            if position_group == "All"
+            else positions.eq(position_group)
+        )
+        for model_name, predicted in forecasts.items():
+            results.append(
+                ml_holdout_metrics(
+                    model_name,
+                    actual.loc[mask],
+                    pd.Series(predicted, index=holdout.index).loc[mask],
+                    position_group,
+                )
+            )
+
+    report = pd.DataFrame(results)
+    if not report.empty:
+        report.to_csv(ML_HOLDOUT_REPORT_PATH, index=False)
+        print("\nUNSEEN-SEASON RESULTS — OVERALL AND BY POSITION")
+        print(
+            report.to_string(
+                index=False,
+                formatters={
+                    "mae": "{:.2f}".format,
+                    "rmse": "{:.2f}".format,
+                    "bias": "{:+.2f}".format,
+                    "within_3_points": "{:.1%}".format,
+                    "within_5_points": "{:.1%}".format,
+                },
+            )
+        )
+        print(f"Holdout report: {ML_HOLDOUT_REPORT_PATH.resolve()}")
+    return report
 
 
 # ============================================================
@@ -4601,7 +5041,7 @@ def parse_args():
     parser.add_argument(
         "--train-ml",
         action="store_true",
-        help="Build historical training set and train XGBoost",
+        help="Train and save the separate direct XGBoost forecast",
     )
 
     parser.add_argument(
@@ -4610,6 +5050,15 @@ def parse_args():
         help=(
             "Train and save transparent learned metric weights from "
             "historical NFLverse data"
+        ),
+    )
+
+    parser.add_argument(
+        "--validate-ml",
+        action="store_true",
+        help=(
+            "Test both ML layers on the prior season without using it "
+            "for training"
         ),
     )
 
@@ -4791,6 +5240,19 @@ def main():
     )
     print(f"Active Out/IR flags: {len(injury_status):,}")
 
+    print("Loading current depth chart...")
+    depth_charts = load_depth_charts(args.season)
+    depth_context = build_depth_context(depth_charts, injury_status)
+    temporary_count = int(
+        depth_context.get("depth_role", pd.Series(dtype=str))
+        .eq("temporary_surge")
+        .sum()
+    )
+    print(
+        f"Depth-chart players: {len(depth_context):,} "
+        f"({temporary_count} temporary replacements)"
+    )
+
     # --------------------------------------------------------
     # Build projections.
     # --------------------------------------------------------
@@ -4804,83 +5266,25 @@ def main():
     # Optional ML.
     # --------------------------------------------------------
 
+    # The direct ML forecast is intentionally separate from the main
+    # projection. It can be compared in the table but never silently
+    # overrides the transparent baseline or learned-weight projection.
     if args.train_ml:
-
-        print(
-            "\nBuilding historical ML training set..."
-        )
-
-        # Beta choice:
-        # use the previous several seasons.
+        print("\nBuilding historical direct-ML training data...")
         training_seasons = list(
-            range(
-                max(1999, args.season - 8),
-                args.season,
-            )
+            range(max(1999, args.season - 8), args.season)
         )
-
-        training = build_walk_forward_training(
-            training_seasons
-        )
-
+        training = build_walk_forward_training(training_seasons)
         if not training.empty:
+            train_direct_ml_model(training, args.season)
 
-            print(
-                f"Training examples: "
-                f"{len(training):,}"
-            )
-
-            ml_result = try_ml_projection(
-                training,
-                projections,
-            )
-
-            if ml_result is not None:
-
-                projections = ml_result
-
-                # Blend ML and transparent baseline.
-                projections["projection"] = (
-                    0.70
-                    * projections["ml_projection"]
-                    + 0.30
-                    * projections["baseline_projection"]
-                )
-
-                print(
-                    "\nML projection enabled."
-                )
-
-            else:
-                projections["projection"] = (
-                    projections[
-                        "baseline_projection"
-                    ]
-                )
-
-        else:
-            projections["projection"] = (
-                projections[
-                    "baseline_projection"
-                ]
-            )
-
+    projections["projection"] = projections["baseline_projection"]
+    direct_ml_result = apply_saved_direct_ml_model(projections)
+    if direct_ml_result is not None:
+        projections = direct_ml_result
+        print("Direct ML forecast available for comparison.")
     else:
-
-        projections["projection"] = (
-            projections[
-                "baseline_projection"
-            ]
-        )
-
-    # Keep baseline as primary displayed projection
-    # unless ML was explicitly enabled.
-    if not args.train_ml:
-        projections["projection"] = (
-            projections[
-                "baseline_projection"
-            ]
-        )
+        projections["ml_projection"] = np.nan
 
     # --------------------------------------------------------
     # Transparent learned-weight projection.
@@ -4939,6 +5343,35 @@ def main():
                 f"using baseline projection. ({exc})"
             )
 
+    # Ranges are built with the baseline feature set, but the displayed
+    # projection may subsequently be replaced by learned weights. Recenter
+    # the same player-specific volatility band on the final displayed value.
+    final_projection = pd.to_numeric(
+        projections["projection"],
+        errors="coerce",
+    ).fillna(
+        pd.to_numeric(
+            projections["baseline_projection"],
+            errors="coerce",
+        ).fillna(0)
+    )
+    final_volatility = pd.to_numeric(
+        projections["volatility"],
+        errors="coerce",
+    ).fillna(4.0) if "volatility" in projections else pd.Series(
+        4.0,
+        index=projections.index,
+    )
+    projections["range_low"] = np.maximum(
+        0,
+        final_projection - 1.15 * final_volatility,
+    )
+    projections["range_high"] = (
+        final_projection + 1.15 * final_volatility
+    )
+
+    projections = apply_depth_context(projections, depth_context)
+
     # --------------------------------------------------------
     # Waiver pool.
     # --------------------------------------------------------
@@ -4967,6 +5400,7 @@ def main():
         projections,
         history,
         injury_status,
+        depth_context,
         waiver,
         unmatched,
         args.season,
@@ -5017,6 +5451,13 @@ def main():
         print_backtest_summary(
             results
         )
+
+    if args.validate_ml:
+        holdout_season = args.season - 1
+        training_seasons = list(
+            range(max(1999, args.season - 8), holdout_season)
+        )
+        run_ml_holdout_validation(training_seasons, holdout_season)
 
     # --------------------------------------------------------
     # Console summary.

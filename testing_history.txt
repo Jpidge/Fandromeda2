@@ -1,0 +1,72 @@
+FANDROMEDA TESTING HISTORY
+==========================
+
+Purpose
+-------
+This file records model-validation results before new forecasting features
+are added. It gives us a fair baseline, so changes are kept only when they
+improve predictions on data the model did not train on.
+
+
+2026-09-19 — First ML holdout validation
+-----------------------------------------
+Command:
+    python gptindex.py --validate-ml
+
+Test design:
+    * Training seasons: 2018 through 2024
+    * Untouched test season: 2025
+    * Test examples: 17,376 player-week forecasts
+    * Each historical projection uses only data available before the
+      projected week. The target week's actual fantasy points are not used
+      as an input feature.
+
+Results:
+
+    Model                                MAE   RMSE   Bias    Within 3   Within 5
+    -----------------------------------  ----  -----  ------  ---------  ---------
+    Baseline projection                  1.40   3.74  -0.20    85.2%      90.0%
+    Machine Learned Weight Values        1.38   3.34  +0.05    84.7%      91.5%
+    Machine Learned Points Projection    1.38   3.34  +0.06    84.0%      91.3%
+
+Definitions:
+    * MAE (mean absolute error): average distance between projected and
+      actual fantasy points. Lower is better.
+    * RMSE (root mean squared error): gives extra weight to larger misses.
+      Lower is better.
+    * Bias: average over- or under-projection. Near zero is better.
+    * Within 3 / Within 5: percentage of projections within that many
+      fantasy points of the actual result. Higher is better.
+
+Interpretation:
+    * Both ML approaches improved MAE slightly: 1.40 to 1.38.
+    * Both ML approaches reduced RMSE from 3.74 to 3.34, about an 11%
+      reduction in the effect of larger misses.
+    * Both improved the within-5 rate. They trade a small reduction in
+      within-3 rate for fewer larger errors.
+    * The transparent learned-weight model and the more complex direct
+      XGBoost model performed almost identically in this aggregate test.
+      That is encouraging: the interpretable model currently earns its
+      place without sacrificing measured accuracy.
+
+Important limitation:
+    These are aggregate results across player-weeks. Before relying on the
+    result for every roster decision, test the same models separately for
+    QB, RB, WR, and TE. An aggregate improvement can hide a weaker position
+    group.
+
+Dashboard correction made after this test:
+    The live dashboard's plus/minus range was originally calculated around
+    the baseline projection. When learned weights replaced the displayed
+    projection, the range could remain centered on the old baseline. The
+    range is now recalculated around the final displayed projection. This
+    display correction does not change the holdout results above.
+
+Next planned validation:
+    1. Produce the 2025 holdout metrics by position.
+    2. Treat this report as the benchmark.
+    3. Add one leakage-safe matchup feature group at a time.
+    4. Re-run the same untouched-2025 test.
+    5. Keep a new feature only when it improves relevant out-of-sample
+       results without creating meaningful bias.
+
