@@ -3341,25 +3341,9 @@ footer {{
         font-size: 12px;
     }}
 
-    /* Keep the final trend view on-screen while the wide roster table scrolls. */
+    /* Preserve smooth horizontal scrolling for the full roster table. */
     .table-wrap {{
         -webkit-overflow-scrolling: touch;
-    }}
-
-    .roster-table th.spark-col,
-    .roster-table td.spark-cell {{
-        position: sticky;
-        right: 0;
-        background: var(--card);
-        box-shadow: -8px 0 12px rgba(5, 8, 20, 0.5);
-    }}
-
-    .roster-table th.spark-col {{
-        z-index: 3;
-    }}
-
-    .roster-table td.spark-cell {{
-        z-index: 2;
     }}
 
 }}
