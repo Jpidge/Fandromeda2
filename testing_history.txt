@@ -1,6 +1,15 @@
 FANDROMEDA TESTING HISTORY
 ==========================
 
+STATUS UPDATE — 2026-09-19
+---------------------------
+The results below were generated before a confirmed feature over-lag was
+fixed. The old pipeline excluded the target week correctly, but also excluded
+the latest available prior-week game. Preserve these numbers as pre-correction
+context only; do not use them as the benchmark for future feature decisions.
+A corrected overall and position-by-position 2025 holdout must be run after
+the temporal regression test passes.
+
 Purpose
 -------
 This file records model-validation results before new forecasting features
@@ -69,4 +78,3 @@ Next planned validation:
     4. Re-run the same untouched-2025 test.
     5. Keep a new feature only when it improves relevant out-of-sample
        results without creating meaningful bias.
-

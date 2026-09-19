@@ -1757,54 +1757,44 @@ def add_player_features(
             df[col] = 0
 
     # --------------------------------------------------------
-    # Lag all features so the current target week can never
-    # leak into its own prediction.
+    # Build pregame features from the already-filtered history.
+    #
+    # ``df`` contains only games before ``target_week``. Therefore its final
+    # row is the player's Week W-1 game and must be included in a Week W
+    # forecast. Shifting here would incorrectly discard that most recent
+    # available game (an over-lag), rather than preventing target leakage.
     # --------------------------------------------------------
 
     for col in metric_columns:
         if col not in df:
             df[col] = 0
 
-        shifted = grouped[col].shift(1)
-
-        df[f"{col}_last"] = shifted
+        df[f"{col}_last"] = df[col]
 
         df[f"{col}_roll2"] = (
-            shifted
-            .groupby(
-                [df["player_id"], df["season"]]
-            )
+            grouped[col]
             .rolling(2, min_periods=1)
             .mean()
             .reset_index(level=[0, 1], drop=True)
         )
 
         df[f"{col}_roll3"] = (
-            shifted
-            .groupby(
-                [df["player_id"], df["season"]]
-            )
+            grouped[col]
             .rolling(3, min_periods=1)
             .mean()
             .reset_index(level=[0, 1], drop=True)
         )
 
         df[f"{col}_roll5"] = (
-            shifted
-            .groupby(
-                [df["player_id"], df["season"]]
-            )
+            grouped[col]
             .rolling(5, min_periods=1)
             .mean()
             .reset_index(level=[0, 1], drop=True)
         )
 
-        # EWMA with the current game excluded.
+        # ``df`` excludes the target week, so this EWMA ends at Week W-1.
         df[f"{col}_ewma"] = (
-            shifted
-            .groupby(
-                [df["player_id"], df["season"]]
-            )
+            grouped[col]
             .transform(
                 lambda s: s.ewm(
                     alpha=EWMA_ALPHA,
@@ -1830,7 +1820,9 @@ def add_player_features(
         recent = df[f"{col}_roll2"]
         prior = (
             grouped[col]
-            .shift(3)
+            # At the Week W-1 row, compare its latest two games (W-2/W-1)
+            # with the preceding two (W-4/W-3).
+            .shift(2)
             .groupby(
                 [df["player_id"], df["season"]]
             )
