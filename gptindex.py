@@ -2574,14 +2574,13 @@ def build_html(
                 </td>
                 <td>{html_escape(row.get("slot", ""))}</td>
                 <td class="projection-col">{projection_display}</td>
-                <td class="confidence-col">
+                <td>
                     <span class="hover-value" tabindex="0"
                         data-tooltip="{average_tooltip}">
                         {fmt(recent_actual_avg.get(player_id))}
                     </span>
                 </td>
-                <td class="spark-cell">{form_display}</td>
-                <td>
+                <td class="confidence-col">
                     <span class="confidence" tabindex="0" data-tooltip="{confidence_description}">
                         {confidence_display}
                     </span>
@@ -2589,6 +2588,7 @@ def build_html(
                 <td class="trend-cell">
                     {chips_html}
                 </td>
+                <td class="spark-cell">{form_display}</td>
             </tr>
             """
         )
@@ -2750,7 +2750,6 @@ header h1 {{
 
 header p {{
     margin: 0;
-    padding-left: 15px;
     color: var(--muted);
     font-size: 12px;
 }}
@@ -3233,10 +3232,6 @@ footer {{
         font-size: 12px;
     }}
 
-    .spark-col,
-    .spark-cell {{
-        display: none;
-    }}
 }}
 
 </style>
@@ -3305,9 +3300,9 @@ footer {{
                     <th data-sort="text">Roster</th>
                     <th class="projection-col" data-sort="number" title="Fantasy-point projection; the value in parentheses is the player-specific plus/minus estimate">Proj. Pts.</th>
                     <th data-sort="number" title="Average actual league-scoring fantasy points over the latest three included games">3-Wk Avg</th>
-                    <th class="spark-col" title="Recent six included games: actual fantasy points for consistency and weighted opportunity for role trend">6-Wk Trend</th>
                     <th class="confidence-col" data-sort="number">Confidence</th>
                     <th data-sort="text">Trend signals</th>
+                    <th class="spark-col" title="Recent six included games: actual fantasy points for consistency and weighted opportunity for role trend">6-Wk Trend</th>
                 </tr>
             </thead>
             <tbody>
