@@ -1093,7 +1093,11 @@ def standardize_player_stats(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def load_current_stats(season: int) -> pd.DataFrame:
+def load_current_stats(
+    season: int,
+    refresh: bool = False,
+) -> pd.DataFrame:
+    """Load player-week stats, optionally refreshing a live season cache."""
 
     raw = load_cached(
         f"player_stats_{season}",
@@ -1101,9 +1105,79 @@ def load_current_stats(season: int) -> pd.DataFrame:
             season,
             summary_level="week",
         ),
+        force=refresh,
     )
 
     return standardize_player_stats(raw)
+
+
+def load_current_injury_status(
+    season: int,
+    target_week: int,
+) -> pd.DataFrame:
+    """Load the newest official-style injury status for each player."""
+
+    raw = load_cached(
+        f"injuries_{season}",
+        lambda: nfl.load_injuries(season),
+        # Injury reports change during the week, so never reuse a stale cache.
+        force=True,
+    )
+    if raw.empty:
+        return pd.DataFrame(columns=["player_id", "injury_flag", "injury_note"])
+
+    aliases = {
+        "player_id": ["gsis_id", "player_id", "nfl_id"],
+        "week": ["week"],
+        "status": ["report_status", "game_status", "status"],
+        "injury": [
+            "report_primary_injury",
+            "injury_description",
+            "injury",
+        ],
+        "updated": ["date_modified", "report_date", "date"],
+    }
+    injuries = rename_if_present(to_pandas(raw), aliases)
+    if "player_id" not in injuries or "status" not in injuries:
+        return pd.DataFrame(columns=["player_id", "injury_flag", "injury_note"])
+
+    for column in ["week", "status", "injury", "updated"]:
+        if column not in injuries:
+            injuries[column] = "" if column != "week" else np.nan
+
+    injuries["week"] = pd.to_numeric(injuries["week"], errors="coerce")
+    injuries = injuries[injuries["week"] <= target_week].copy()
+    injuries["status"] = injuries["status"].map(clean_text).str.upper()
+    injuries["injury"] = injuries["injury"].map(clean_text)
+    injuries["updated"] = pd.to_datetime(injuries["updated"], errors="coerce")
+
+    def flag_for_status(status: str) -> str:
+        if status == "IR" or any(
+            term in status
+            for term in ["INJURED RESERVE", "RESERVE/INJURED", " IR"]
+        ):
+            return "IR"
+        if status == "OUT":
+            return "O"
+        return ""
+
+    injuries["injury_flag"] = injuries["status"].map(flag_for_status)
+    injuries = injuries[injuries["injury_flag"] != ""].copy()
+    if injuries.empty:
+        return pd.DataFrame(columns=["player_id", "injury_flag", "injury_note"])
+
+    injuries["injury_note"] = injuries.apply(
+        lambda row: " · ".join(
+            part for part in [row["status"].title(), row["injury"]] if part
+        ),
+        axis=1,
+    )
+    return (
+        injuries
+        .sort_values(["player_id", "week", "updated"])
+        .groupby("player_id", as_index=False)
+        .tail(1)[["player_id", "injury_flag", "injury_note"]]
+    )
 
 
 # ============================================================
@@ -2379,6 +2453,7 @@ def build_html(
     roster: pd.DataFrame,
     projections: pd.DataFrame,
     history: pd.DataFrame,
+    injury_status: pd.DataFrame,
     waiver: pd.DataFrame,
     unmatched: pd.DataFrame,
     season: int,
@@ -2446,6 +2521,12 @@ def build_html(
 
     recent_actual_avg = {}
     recent_actual_values = {}
+    injury_by_player = {}
+    if not injury_status.empty:
+        injury_by_player = {
+            str(row["player_id"]): row
+            for _, row in injury_status.iterrows()
+        }
     if not history.empty and {"player_id", "week", "fantasy_points_std"}.issubset(history.columns):
         recent_actual = (
             history
@@ -2465,7 +2546,9 @@ def build_html(
             for player_id, group in recent_actual.groupby("player_id")
         }
 
-    for _, row in roster_proj.iterrows():
+    # Keep the source order from Yahoo. It is used as the default dashboard
+    # order and remains available after a visitor sorts the Roster column.
+    for yahoo_order, (_, row) in enumerate(roster_proj.iterrows()):
 
         games_played = safe_float(row.get("games_played"), 0)
         if games_played < 3:
@@ -2474,7 +2557,6 @@ def build_html(
             confidence_display = f"{fmt(row.get('confidence'), 0)}%"
 
         signal_description = html_escape(signal_tooltip(row))
-        confidence_description = html_escape(confidence_tooltip(row))
         chips_html = signal_chips_html(row)
         projection = safe_float(row.get("projection"))
         if not np.isfinite(projection):
@@ -2494,6 +2576,16 @@ def build_html(
             projection_display = fmt(projection)
 
         player_id = clean_text(row.get("nflverse_player_id", ""))
+        injury = injury_by_player.get(player_id)
+        injury_badge = ""
+        if injury is not None:
+            flag = clean_text(injury.get("injury_flag", ""))
+            note = html_escape(injury.get("injury_note", flag))
+            badge_class = "injury-ir" if flag == "IR" else "injury-out"
+            injury_badge = (
+                f'<span class="injury-flag {badge_class}" tabindex="0" '
+                f'data-tooltip="{note}">{html.escape(flag)}</span>'
+            )
         production_spark, opportunity_spark = player_sparklines(
             history,
             player_id,
@@ -2546,7 +2638,8 @@ def build_html(
         roster_rows.append(
             f"""
             <tr class="roster-player"
-                 data-fantasy-team="{html_escape(row.get('manager', ''))}">
+                 data-fantasy-team="{html_escape(row.get('manager', ''))}"
+                 data-yahoo-order="{yahoo_order}">
                 <td>
                     <button class="player-link" type="button"
                         data-name="{html_escape(row.get('player', ''))}"
@@ -2567,6 +2660,7 @@ def build_html(
                         data-td-dependency="{fmt(row.get('td_dependency'))}">
                         {html_escape(row.get("player", ""))}
                     </button>
+                    {injury_badge}
                     <span class="player-team">
                         ({html_escape(row.get("team", ""))} —
                         {html_escape(row.get("position", ""))})
@@ -2578,11 +2672,6 @@ def build_html(
                     <span class="hover-value" tabindex="0"
                         data-tooltip="{average_tooltip}">
                         {fmt(recent_actual_avg.get(player_id))}
-                    </span>
-                </td>
-                <td class="confidence-col">
-                    <span class="confidence" tabindex="0" data-tooltip="{confidence_description}">
-                        {confidence_display}
                     </span>
                 </td>
                 <td class="trend-cell">
@@ -3034,7 +3123,8 @@ th[data-sort]:hover {{
 }}
 
 .signal-chip[data-tooltip],
-.spark-pair[data-tooltip] {{
+.spark-pair[data-tooltip],
+.injury-flag[data-tooltip] {{
     text-decoration: none;
 }}
 
@@ -3107,6 +3197,25 @@ table.sortable td:first-child {{
     font-size: 12px;
     margin-top: 2px;
 }}
+
+.injury-flag {{
+    display: inline-flex;
+    width: 16px;
+    height: 16px;
+    align-items: center;
+    justify-content: center;
+    margin-left: 4px;
+    border-radius: 3px;
+    color: #0b1020;
+    font-size: 9px;
+    font-weight: 900;
+    line-height: 1;
+    text-decoration: none;
+    vertical-align: middle;
+}}
+
+.injury-out {{ background: #f06b78; }}
+.injury-ir {{ background: #f4c95d; }}
 
 .projection-col,
 .confidence-col {{
@@ -3232,6 +3341,27 @@ footer {{
         font-size: 12px;
     }}
 
+    /* Keep the final trend view on-screen while the wide roster table scrolls. */
+    .table-wrap {{
+        -webkit-overflow-scrolling: touch;
+    }}
+
+    .roster-table th.spark-col,
+    .roster-table td.spark-cell {{
+        position: sticky;
+        right: 0;
+        background: var(--card);
+        box-shadow: -8px 0 12px rgba(5, 8, 20, 0.5);
+    }}
+
+    .roster-table th.spark-col {{
+        z-index: 3;
+    }}
+
+    .roster-table td.spark-cell {{
+        z-index: 2;
+    }}
+
 }}
 
 </style>
@@ -3297,10 +3427,10 @@ footer {{
             <thead>
                 <tr>
                     <th data-sort="text">Player</th>
-                    <th data-sort="text">Roster</th>
+                    <th data-sort="roster" data-direction="yahoo"
+                        title="Click to cycle: Yahoo roster order, ascending, descending">Roster</th>
                     <th class="projection-col" data-sort="number" title="Fantasy-point projection; the value in parentheses is the player-specific plus/minus estimate">Proj. Pts.</th>
                     <th data-sort="number" title="Average actual league-scoring fantasy points over the latest three included games">3-Wk Avg</th>
-                    <th class="confidence-col" data-sort="number">Confidence</th>
                     <th data-sort="text">Trend signals</th>
                     <th class="spark-col" title="Recent six included games: actual fantasy points for consistency and weighted opportunity for role trend">6-Wk Trend</th>
                 </tr>
@@ -3376,7 +3506,7 @@ footer {{
         <strong>Projection (±)</strong><br>
         Weekly fantasy-point projection followed by a player-specific plus/minus estimate. The estimate is 1.15 × the model's recent-volatility measure; it is a planning guide, not a guarantee or formal confidence interval.<br><br>
         <strong>Confidence</strong><br>
-        A 20–90 consistency score based on volatility and opportunity. It is withheld as “Early season” until the player has at least three included games.
+        An internal 20–90 consistency score, not a probability. It starts at 50, then adds capped consistency (12 − volatility) and capped opportunity; it is shown in player details rather than the main table and is withheld as “Early season” until at least three included games are available.
     </div>
 
     <div class="signal-guide">
@@ -3507,11 +3637,20 @@ document.querySelectorAll("table.sortable th[data-sort]").forEach(
                 header.parentElement.children,
                 header
             );
-            const direction = header.dataset.direction === "asc" ? -1 : 1;
             const type = header.dataset.sort;
             const rows = Array.from(body.rows);
+            const rosterMode = type === "roster";
+            const currentMode = header.dataset.direction || "yahoo";
+            const nextMode = rosterMode
+                ? (currentMode === "yahoo" ? "asc" :
+                    currentMode === "asc" ? "desc" : "yahoo")
+                : (currentMode === "asc" ? "desc" : "asc");
+            const direction = nextMode === "desc" ? -1 : 1;
 
             function value(row) {{
+                if (rosterMode && nextMode === "yahoo") {{
+                    return Number(row.dataset.yahooOrder || 0);
+                }}
                 const text = row.cells[index].innerText.trim();
                 if (type === "number") {{
                     const match = text.match(/-?[0-9]+([.][0-9]+)?/);
@@ -3537,7 +3676,7 @@ document.querySelectorAll("table.sortable th[data-sort]").forEach(
             table.querySelectorAll("th[data-sort]").forEach(function (cell) {{
                 cell.dataset.direction = "";
             }});
-            header.dataset.direction = direction === 1 ? "asc" : "desc";
+            header.dataset.direction = nextMode;
         }});
     }}
 );
@@ -4625,7 +4764,8 @@ def main():
     # --------------------------------------------------------
 
     stats = load_current_stats(
-        args.season
+        args.season,
+        refresh=True,
     )
 
     if stats.empty:
@@ -4659,6 +4799,13 @@ def main():
     print(
         f"\nProjection target: Week {target_week}"
     )
+
+    print("\nLoading current injury statuses...")
+    injury_status = load_current_injury_status(
+        args.season,
+        target_week,
+    )
+    print(f"Active Out/IR flags: {len(injury_status):,}")
 
     # --------------------------------------------------------
     # Build projections.
@@ -4835,6 +4982,7 @@ def main():
         roster,
         projections,
         history,
+        injury_status,
         waiver,
         unmatched,
         args.season,
