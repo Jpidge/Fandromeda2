@@ -1,4 +1,4 @@
-# Fandromeda current-state audit
+# FANDROMEDA current-state audit
 
 Date: 2026-09-19
 
@@ -41,12 +41,18 @@ The feature contract has now been corrected:
 test. Its Week 6 target contains an intentionally extreme Week 6 value and
 asserts that the resulting features still end with Week 5.
 
-## Confirmed train/serve skew
+## Train/serve consistency
 
-Live early-season forecasts blend each player's final three games from the
-prior season. Historical walk-forward training currently does not use that
-same carry-over history. This is the next temporal-consistency item to fix,
-after the Week W-1 test is run and the corrected holdout baseline is saved.
+Resolved and validated on 2026-09-19.
+
+Live forecasts and historical walk-forward training now call the same shared
+feature-history path. Each player's final three prior-season games, including
+available snap usage, are attached before Week 1 as negative-week carry-over
+context. The holdout now trains and tests with the same early-season history
+structure that the live dashboard uses.
+
+Saved learned-weight and direct-ML artifacts from before this change must be
+retrained before they are used as current live forecasts.
 
 ## Scoring audit
 
@@ -76,13 +82,10 @@ test passes.
 
 ## Safe milestone order
 
-1. Run the temporal regression test and regenerate the corrected 2025
-   overall/by-position holdout benchmark.
-2. Make train and live feature construction consistent for prior-season
-   carry-over history; rerun the same benchmark.
-3. Build and test one canonical league-scoring engine.
-4. Add versioned, append-only pre-kickoff prediction snapshots.
-5. Add a reliable, policy-compliant Yahoo-projection capture workflow.
-6. Compare Fandromeda and Yahoo fairly, then evaluate lineup decisions.
-7. Research matchup, role, and uncertainty features one at a time against
+1. Retrain and save live ML artifacts using the corrected feature pipeline.
+2. Build and test one canonical league-scoring engine.
+3. Add versioned, append-only pre-kickoff prediction snapshots.
+4. Add a reliable, policy-compliant Yahoo-projection capture workflow.
+5. Compare Fandromeda and Yahoo fairly, then evaluate lineup decisions.
+6. Research matchup, role, and uncertainty features one at a time against
    locked temporal benchmarks.

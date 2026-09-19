@@ -112,3 +112,44 @@ Notes:
       validator now reports an explicit "Offense (QB/RB/WR/TE)" aggregate as
       the primary overall score, while retaining "All player records" as a
       diagnostic row.
+
+
+2026-09-19 — Train/serve-consistent holdout benchmark
+------------------------------------------------------
+Command:
+    python index.py --validate-ml
+
+Pipeline condition:
+    Training and live forecasting both include each player's final three
+    prior-season games and available snap usage as carry-over context. The
+    training run downloaded 2017 data so the 2018 training season receives
+    the same carry-over treatment.
+
+2025 holdout results (trained 2018–2024):
+
+    Group                  Best model                         Baseline MAE  Best MAE
+    ---------------------  ---------------------------------  ------------  --------
+    Offense (QB/RB/WR/TE)  Machine Learned Points Projection       4.02       3.84
+    QB                     Machine Learned Points Projection       8.32       7.94
+    RB                     Machine Learned Weight Values            4.22       4.00
+    WR                     Machine Learned Points Projection        3.38       3.23
+    TE                     Machine Learned Points Projection        2.80       2.68
+
+Key offense-wide results:
+
+    Model                                MAE   RMSE   Bias    Within 3   Within 5
+    -----------------------------------  ----  -----  ------  ---------  ---------
+    Baseline projection                  4.02   6.06  +0.03    55.7%      71.1%
+    Machine Learned Weight Values        3.87   5.61  +0.10    56.3%      74.4%
+    Machine Learned Points Projection    3.84   5.60  +0.09    56.4%      74.4%
+
+Interpretation:
+    * Both ML layers improve the meaningful offensive aggregate over the
+      baseline. Direct ML has a small MAE advantage, while learned weights
+      remain nearly tied and are more transparent.
+    * This single holdout does not justify selecting a different production
+      model by position. Confirm any such policy with additional time-based
+      folds first.
+    * These values are the current benchmark for future feature work. The
+      saved live ML artifacts must be retrained before use because the
+      feature pipeline changed.

@@ -3,6 +3,7 @@ data/cache/
 data/output/roster_mapping.csv
 data/output/projections.csv
 data/output/waiver_candidates.csv
+roadmap.txt
 .env 
 config.json 
 oauth_tokens.json 

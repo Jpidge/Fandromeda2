@@ -4,7 +4,11 @@ import unittest
 
 import pandas as pd
 
-from gptindex import add_player_features
+from gptindex import (
+    add_player_features,
+    build_feature_history,
+    prepare_prior_season_carryover,
+)
 
 
 class TemporalFeatureTests(unittest.TestCase):
@@ -60,6 +64,29 @@ class TemporalFeatureTests(unittest.TestCase):
                 full_features.iloc[0][column],
                 prior_features.iloc[0][column],
             )
+
+    def test_prior_season_carryover_is_shared_pregame_history(self):
+        prior = self.player_history(include_target_week=True)
+        prior["season"] = 2025
+        prior["week"] = [13, 14, 15, 16, 17, 18]
+        prior["fantasy_points_std"] = [1, 2, 3, 4, 5, 18]
+
+        carryover = prepare_prior_season_carryover(prior, 2026)
+        self.assertEqual(carryover["week"].tolist(), [-3, -2, -1])
+        self.assertEqual(carryover["source_week"].tolist(), [16, 17, 18])
+        self.assertEqual(carryover["season"].tolist(), [2026, 2026, 2026])
+
+        current = self.player_history(include_target_week=False).iloc[0:0]
+        current["season"] = 2026
+        historical = build_feature_history(
+            current,
+            carryover,
+            target_week=1,
+        )
+        features = add_player_features(historical, target_week=1)
+
+        # A Week 1 forecast sees the player's final prior-season game.
+        self.assertEqual(features.iloc[0]["fantasy_points_last"], 18.0)
 
 
 if __name__ == "__main__":

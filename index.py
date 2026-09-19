@@ -1,4 +1,4 @@
-"""Fandromeda dashboard entry point.
+"""FANDROMEDA dashboard entry point.
 
 Run: python index.py
 """

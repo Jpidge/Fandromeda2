@@ -1,4 +1,4 @@
-# Fandromeda Engine
+# FANDROMEDA
 Cosmic Fantasy Analytics & Waiver Intelligence Hub
 
 ## Quick Start

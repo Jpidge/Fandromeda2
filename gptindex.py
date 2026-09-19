@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Fantasy Command Center - Beta v1
-================================
+FANDROMEDA · v0.3.0-beta
+=========================
 
 Personal fantasy football forecasting / dashboard system.
 
@@ -81,7 +81,7 @@ except ImportError:
 # CONFIGURATION
 # ============================================================
 
-APP_NAME = "Fandromeda2"
+APP_NAME = "FANDROMEDA"
 WORDMARK_PATH = Path(
     r"C:\Users\jtpag\Documents\Python\ClaudeDash\fantasy_tool"
     r"\fantasy_tool\tools\wordmark_paths.svg"
@@ -1269,6 +1269,77 @@ def load_snaps(season: int) -> pd.DataFrame:
     )
 
     return standardize_snaps(raw)
+
+
+def prepare_prior_season_carryover(
+    prior_stats: pd.DataFrame,
+    target_season: int,
+) -> pd.DataFrame:
+    """Keep each player's final three prior-season games as pre-Week-1 history."""
+
+    if prior_stats.empty:
+        return pd.DataFrame()
+
+    required = {"player_id", "season", "week"}
+    if not required.issubset(prior_stats.columns):
+        return pd.DataFrame()
+
+    # A player's own final three games are more useful than the league's final
+    # three calendar weeks, particularly after missed games or postseason play.
+    carryover = (
+        prior_stats
+        .sort_values(["player_id", "week"])
+        .groupby("player_id", group_keys=False)
+        .tail(3)
+        .copy()
+    )
+    carryover["source_season"] = carryover["season"]
+    carryover["source_week"] = carryover["week"]
+    carryover["week"] = (
+        carryover.groupby("player_id").cumcount()
+        - carryover.groupby("player_id")["player_id"].transform("size")
+    )
+    # Grouping by the target season lets carry-over rows participate in the
+    # exact same rolling windows as the new season's Week 1 onward rows.
+    carryover["season"] = target_season
+    return carryover
+
+
+def load_prior_season_carryover(target_season: int) -> pd.DataFrame:
+    """Load prior-season stats and usage for train/live feature consistency."""
+
+    prior_season = target_season - 1
+    prior_stats = load_current_stats(prior_season)
+    if prior_stats.empty:
+        return pd.DataFrame()
+
+    prior_stats = merge_usage(
+        prior_stats,
+        load_snaps(prior_season),
+    )
+    return prepare_prior_season_carryover(
+        prior_stats,
+        target_season,
+    )
+
+
+def build_feature_history(
+    season_stats: pd.DataFrame,
+    prior_carryover: pd.DataFrame,
+    target_week: int,
+) -> pd.DataFrame:
+    """Return the common pregame history used by training and live forecasts."""
+
+    current_history = season_stats[
+        pd.to_numeric(season_stats["week"], errors="coerce") < target_week
+    ].copy()
+    if prior_carryover.empty:
+        return current_history
+    return pd.concat(
+        [prior_carryover, current_history],
+        ignore_index=True,
+        sort=False,
+    )
 
 
 # ============================================================
@@ -2912,8 +2983,18 @@ def build_html(
         )
 
     waiver_rows = []
+    waiver_positions = sorted(
+        position
+        for position in waiver["position"].dropna().map(clean_text).unique()
+        if position
+    )
+    waiver_position_options = "".join(
+        f'<option value="{html_escape(position)}">'
+        f'{html_escape(position)}</option>'
+        for position in waiver_positions
+    )
 
-    for _, row in waiver.head(30).iterrows():
+    for waiver_rank, (_, row) in enumerate(waiver.iterrows(), start=1):
 
         signal_description = html_escape(signal_tooltip(row))
         chips_html = signal_chips_html(row)
@@ -2921,9 +3002,11 @@ def build_html(
 
         waiver_rows.append(
             f"""
-            <tr>
+            <tr class="waiver-player"
+                data-waiver-position="{html_escape(row.get('position', ''))}"
+                data-waiver-rank="{waiver_rank}">
                 <td>
-                    <strong>
+                    <strong class="player-name">
                         {html_escape(row.get("player_name", ""))}
                     </strong>
                     <span class="player-team">
@@ -3048,33 +3131,39 @@ header h1 {{
     align-items: center;
     gap: 0;
     height: 52px;
-    padding-left: 6px;
+    /* Align the mark's left edge with the status/subtext below it. */
+    padding-left: 11px;
 }}
 
 .brand svg:not(.brand-mark) {{
     width: 300px;
     height: 52px;
     /* Offset the source SVG's built-in left-side viewBox whitespace. */
-    margin-left: -39px;
+    margin-left: -43px;
 }}
 
 .brand-mark {{
     display: inline-block;
-    flex: 0 0 32px;
-    width: 32px !important;
+    /* Six-pixel bars and gaps match the F's vertical stroke weight. */
+    flex: 0 0 30px;
+    width: 30px !important;
     height: 18px !important;
-    margin-right: 2px;
-    transform: translateY(-1px);
+    margin-right: 0;
+    /* Align the short bar with the wordmark's lower edge. */
+    transform: translateY(1.5px);
 }}
 
-.brand-suffix {{
+.brand-beta {{
     color: var(--cyan);
     font-family: Rajdhani, "Segoe UI", sans-serif;
     /* The source SVG includes generous right-side whitespace. */
-    margin-left: -47px;
-    font-size: 48px;
+    margin-left: -41px;
+    font-size: 13px;
     font-weight: 700;
     line-height: 1;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    transform: translateY(-13px);
 }}
 
 header p {{
@@ -3216,6 +3305,23 @@ h2 {{
     font-size: 13px;
 }}
 
+.waiver-filter {{
+    color: var(--muted);
+    font-size: 13px;
+    white-space: nowrap;
+}}
+
+.waiver-filter select {{
+    margin-left: 6px;
+    padding: 7px 9px;
+    color: var(--text);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font: inherit;
+    cursor: pointer;
+}}
+
 .team-picker {{
     display: inline-block;
     position: relative;
@@ -3348,6 +3454,10 @@ th[data-sort] {{
 
 th[data-sort]:hover {{
     color: var(--text);
+}}
+
+th[data-tooltip] {{
+    cursor: pointer;
 }}
 
 .signal,
@@ -3496,6 +3606,42 @@ table.sortable td:first-child {{
     pointer-events: none;
 }}
 
+#konami-message {{
+    position: fixed;
+    z-index: 200;
+    top: 18px;
+    left: 50%;
+    width: min(390px, calc(100vw - 32px));
+    padding: 13px 18px;
+    border: 1px solid var(--cyan);
+    border-radius: 12px;
+    background: linear-gradient(135deg, #102b3b, #211842);
+    box-shadow: 0 0 24px #2ee6d688, 0 0 48px #a88cff55;
+    color: var(--text);
+    font-family: Rajdhani, "Segoe UI", sans-serif;
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-align: center;
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, -18px) scale(0.96);
+    transition: opacity 160ms ease-out, transform 160ms ease-out;
+}}
+
+#konami-message.active {{
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+}}
+
+#konami-message span {{
+    display: block;
+    margin-top: 3px;
+    color: var(--cyan);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+}}
+
 .player-link {{
     padding: 0;
     border: 0;
@@ -3506,6 +3652,12 @@ table.sortable td:first-child {{
     text-align: left;
     white-space: nowrap;
     cursor: pointer;
+}}
+
+.player-name {{
+    display: inline-block;
+    white-space: nowrap;
+    font-weight: 700;
 }}
 
 .player-link:hover {{
@@ -3614,13 +3766,13 @@ footer {{
 
 <header>
     <h1 class="brand" aria-label="{APP_NAME}">
-        <svg class="brand-mark" width="32" height="18" viewBox="0 0 32 18" aria-hidden="true">
-            <rect x="0" y="12" width="8" height="6" rx="1" fill="var(--cyan)" />
-            <rect x="12" y="6" width="8" height="12" rx="1" fill="var(--violet)" />
-            <rect x="24" y="0" width="8" height="18" rx="1" fill="var(--magenta)" />
+        <svg class="brand-mark" width="30" height="18" viewBox="0 0 30 18" aria-hidden="true">
+            <rect x="0" y="12" width="6" height="6" rx="1" fill="var(--cyan)" />
+            <rect x="12" y="6" width="6" height="12" rx="1" fill="var(--violet)" />
+            <rect x="24" y="0" width="6" height="18" rx="1" fill="var(--magenta)" />
         </svg>
         {wordmark_svg}
-        <span class="brand-suffix">2</span>
+        <sup class="brand-beta">beta</sup>
     </h1>
     <div class="header-status">
         <p>
@@ -3638,7 +3790,7 @@ footer {{
 <div class="tabs" role="tablist">
     <button class="tab-button active" data-tab="roster-panel">Roster</button>
     <button class="tab-button" data-tab="waivers-panel">Waivers</button>
-    <button class="tab-button" data-tab="guide-panel">Model guide</button>
+    <button class="tab-button" data-tab="guide-panel">Information</button>
 </div>
 
 <section id="roster-panel" class="tab-panel">
@@ -3675,13 +3827,17 @@ footer {{
             <thead>
                 <tr>
                     <th data-sort="text">Player</th>
-                    <th data-sort="roster" data-direction="yahoo"
-                        title="Click to cycle: Yahoo roster order, ascending, descending">Roster</th>
-                    <th class="projection-col" data-sort="number" title="Fantasy-point projection; the value in parentheses is the player-specific plus/minus estimate">Proj. Pts.</th>
-                    <th class="projection-col" data-sort="number" title="Separate direct XGBoost next-week forecast. It is shown for comparison and does not replace Proj. Pts.">ML Proj.</th>
-                    <th data-sort="number" title="Average actual league-scoring fantasy points over the latest three included games">3-Wk Avg</th>
-                    <th data-sort="text">Trend signals</th>
-                    <th class="spark-col" title="Recent six included games: actual fantasy points for consistency and weighted opportunity for role trend">6-Wk Trend</th>
+                    <th data-sort="roster" data-direction="yahoo" tabindex="0"
+                        data-tooltip="Click to cycle: Yahoo roster order, ascending, descending">Roster</th>
+                    <th class="projection-col" data-sort="number" tabindex="0"
+                        data-tooltip="Fantasy-point projection; the value in parentheses is the player-specific plus/minus estimate">Proj. Pts.</th>
+                    <th class="projection-col" data-sort="number" tabindex="0"
+                        data-tooltip="Separate direct XGBoost next-week forecast. It is shown for comparison and does not replace Proj. Pts.">ML Proj.</th>
+                    <th data-sort="number" tabindex="0"
+                        data-tooltip="Average actual league-scoring fantasy points over the latest three included games">3-Wk Avg</th>
+                    <th>Trend signals</th>
+                    <th class="spark-col" tabindex="0"
+                        data-tooltip="Recent six included games: actual fantasy points for consistency and weighted opportunity for role trend">6-Wk Trend</th>
                 </tr>
             </thead>
             <tbody>
@@ -3702,7 +3858,16 @@ footer {{
 </section>
 
 <section id="waivers-panel" class="tab-panel" hidden>
-    <h2>Waiver Wire — Discovery View</h2>
+    <div class="section-heading">
+        <h2>Waiver Wire — Discovery View</h2>
+        <label class="waiver-filter" for="waiver-position-filter">
+            Position
+            <select id="waiver-position-filter">
+                <option value="">All positions</option>
+                {waiver_position_options}
+            </select>
+        </label>
+    </div>
 
     <p class="muted">
         <strong>WDS (Waiver Discovery Score)</strong> = projected points +
@@ -3710,20 +3875,25 @@ footer {{
         default: a higher score highlights stronger projected production and
         a possible role-growth case; it is not a complete player-value ranking.
     </p>
+    <p class="muted" id="waiver-display-note">
+        Showing the top 30 available players. Choose a position to see that
+        position's top 30.
+    </p>
 
     <div class="table-wrap">
         <table class="sortable waiver-table">
             <thead>
                 <tr>
                     <th data-sort="text">Player</th>
-                    <th data-sort="number" title="Waiver Discovery Score: projected points plus capped opportunity momentum and trend gap">WDS</th>
+                    <th data-sort="number" tabindex="0"
+                        data-tooltip="Waiver Discovery Score: projected points plus capped opportunity momentum and trend gap">WDS</th>
                     <th data-sort="number">Proj. Pts.</th>
                     <th data-sort="number">Opp trend</th>
-                    <th data-sort="text">Trend signals</th>
+                    <th>Trend signals</th>
                 </tr>
             </thead>
 
-            <tbody>
+            <tbody id="waiver-body">
                 {''.join(waiver_rows)}
             </tbody>
         </table>
@@ -3731,21 +3901,21 @@ footer {{
 </section>
 
 <section id="guide-panel" class="tab-panel" hidden>
-    <h2>Model guide</h2>
+    <h2>FANDROMEDA Features</h2>
 
     <div class="signal-guide">
-        <strong>Which projection is shown?</strong><br>
-        Fandromeda calculates three forecasts. <strong>Proj. Pts.</strong> uses Machine Learned Weight Values when saved learned weights are available; otherwise it uses the transparent Baseline projection. <strong>ML Proj.</strong> is the separate direct Machine Learned Points Projection shown for comparison only. It never silently replaces Proj. Pts.<br><br>
         <strong>Machine Learned Points Projection</strong><br>
-        A separate XGBoost model trained on historical, leakage-safe player-weeks to predict next-week fantasy points directly. It considers the same pre-game history plus position indicators; it is a comparison forecast and does not replace Proj. Pts. A dash means the direct model has not been trained or is unavailable on this computer.<br><br>
+        <strong>ML Proj.</strong> is a separate XGBoost model trained on historical, leakage-safe player-weeks to predict next-week fantasy points directly. It considers the same pre-game history plus position indicators. It is shown alongside <strong>Proj. Pts.</strong> for comparison; Proj. Pts. remains the primary learned-weight forecast. A dash means the direct model has not been trained or is unavailable on this computer.<br><br>
         <strong>Machine Learned Weight Values</strong><br>
-        When trained weights are available, Proj. Pts. uses a transparent regularized model trained on historical NFLverse player-weeks instead of the hand-set baseline mix. It learns how much each pre-game metric should raise or lower the next-week projection, including separate QB/RB/WR/TE adjustments. Run <code>python gptindex.py --learn-weights</code> to train or refresh it. The saved weight report ranks the learned metric weights; it remains separate from Machine Learned Points Projection.<br><br>
+        Proj. Pts. uses a transparent regularized model trained on historical NFLverse player-weeks instead of the hand-set baseline mix. It learns how much each pre-game metric should raise or lower the next-week projection, including separate QB/RB/WR/TE adjustments. Run <code>python gptindex.py --learn-weights</code> to train or refresh it. The saved weight report ranks the learned metric weights; it remains separate from Machine Learned Points Projection.<br><br>
         <strong>Projection (±)</strong><br>
         Weekly fantasy-point projection followed by a player-specific plus/minus estimate. The estimate is 1.15 × the model's recent-volatility measure; it is a planning guide, not a guarantee or formal confidence interval.<br><br>
         <strong>Scoring and projections</strong><br>
         Core league scoring: passing yards ÷ 25, passing touchdowns × 6, interceptions × −2, rushing/receiving yards ÷ 10, rushing/receiving touchdowns × 6, receptions × 0, fumbles lost × −2, and two-point conversions × 2. Return yards score 1 point per 25 yards, and 40+ yard passing/rushing/receiving touchdowns receive +1. Those return and 40+ touchdown details require play-by-play data and are not yet included in the weekly-player projection inputs.<br><br>
         <strong>Baseline projection</strong><br>
         45% exponentially weighted fantasy-point average + 25% three-game rolling average + 15% five-game rolling average + 15% season weighted average, then a capped opportunity-momentum adjustment and TD-dependence penalty.<br><br>
+        <strong>Which projection is shown?</strong><br>
+        Fandromeda calculates three forecasts. <strong>Proj. Pts.</strong> uses Machine Learned Weight Values. <strong>ML Proj.</strong> is the separate direct Machine Learned Points Projection shown for comparison only. It never silently replaces Proj. Pts.<br><br>
         <strong>Carry-over history</strong><br>
         The last three games from the prior season are included before Week 1 so established players have useful rolling history. Current-season games remain the newest and most important observations.<br><br>
         <strong>3-Wk Avg and recent form</strong><br>
@@ -3769,12 +3939,16 @@ footer {{
 {unmatched_html}
 
 <footer>
-    Fantasy Command Center beta v1
+    FANDROMEDA · v0.3.0-beta
 </footer>
 
 </main>
 
 <div id="hover-tooltip" hidden></div>
+<div id="konami-message" aria-live="polite" role="status">
+    THE MACHINE IS LEARNING
+    <span>FANDROMEDA SYSTEM BOOST</span>
+</div>
 
 <dialog id="player-detail">
     <button class="dialog-close" type="button" id="detail-close">Close</button>
@@ -3837,6 +4011,39 @@ teamSelect.addEventListener("change", function () {{
     );
 }});
 
+const waiverPositionFilter = document.getElementById("waiver-position-filter");
+const waiverBody = document.getElementById("waiver-body");
+const waiverDisplayNote = document.getElementById("waiver-display-note");
+
+function applyWaiverPositionFilter() {{
+    if (!waiverPositionFilter || !waiverBody) return;
+    const selected = waiverPositionFilter.value;
+    const rows = Array.from(waiverBody.rows);
+    const matching = rows
+        .filter(function (row) {{
+            return !selected || row.dataset.waiverPosition === selected;
+        }})
+        .sort(function (left, right) {{
+            return Number(left.dataset.waiverRank) -
+                Number(right.dataset.waiverRank);
+        }});
+
+    rows.forEach(function (row) {{ row.hidden = true; }});
+    matching.slice(0, 30).forEach(function (row) {{ row.hidden = false; }});
+
+    if (waiverDisplayNote) {{
+        const label = selected || "all positions";
+        waiverDisplayNote.textContent =
+            `Showing the top ${{Math.min(30, matching.length)}} available ` +
+            `players for ${{label}}. Sorting applies only to these visible rows.`;
+    }}
+}}
+
+if (waiverPositionFilter) {{
+    waiverPositionFilter.addEventListener("change", applyWaiverPositionFilter);
+    applyWaiverPositionFilter();
+}}
+
 const hoverTooltip = document.getElementById("hover-tooltip");
 
 function positionTooltip(element) {{
@@ -3886,7 +4093,10 @@ document.querySelectorAll("table.sortable th[data-sort]").forEach(
                 header
             );
             const type = header.dataset.sort;
-            const rows = Array.from(body.rows);
+            const allRows = Array.from(body.rows);
+            const rows = table.classList.contains("waiver-table")
+                ? allRows.filter(function (row) {{ return !row.hidden; }})
+                : allRows;
             const rosterMode = type === "roster";
             const currentMode = header.dataset.direction || "yahoo";
             const nextMode = rosterMode
@@ -3928,6 +4138,35 @@ document.querySelectorAll("table.sortable th[data-sort]").forEach(
         }});
     }}
 );
+
+const konamiSequence = [
+    "ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown",
+    "ArrowLeft", "ArrowRight", "ArrowLeft", "ArrowRight", "b", "a",
+];
+let konamiProgress = 0;
+let konamiTimeout;
+const konamiMessage = document.getElementById("konami-message");
+
+document.addEventListener("keydown", function (event) {{
+    const activeTag = document.activeElement && document.activeElement.tagName;
+    if (["INPUT", "SELECT", "TEXTAREA"].includes(activeTag)) return;
+
+    const key = event.key.length === 1
+        ? event.key.toLowerCase()
+        : event.key;
+    konamiProgress = key === konamiSequence[konamiProgress]
+        ? konamiProgress + 1
+        : (key === konamiSequence[0] ? 1 : 0);
+
+    if (konamiProgress !== konamiSequence.length) return;
+    konamiProgress = 0;
+    if (!konamiMessage) return;
+    clearTimeout(konamiTimeout);
+    konamiMessage.classList.add("active");
+    konamiTimeout = setTimeout(function () {{
+        konamiMessage.classList.remove("active");
+    }}, 3200);
+}});
 
 const detailDialog = document.getElementById("player-detail");
 const detailName = document.getElementById("detail-name");
@@ -4422,12 +4661,8 @@ def build_walk_forward_training(
         if stats.empty:
             continue
 
-        snaps = load_snaps(season)
-
-        stats = merge_usage(
-            stats,
-            snaps,
-        )
+        stats = merge_usage(stats, load_snaps(season))
+        prior_carryover = load_prior_season_carryover(season)
 
         # Need at least several weeks to create useful
         # historical examples.
@@ -4446,9 +4681,11 @@ def build_walk_forward_training(
             if target_week <= 1:
                 continue
 
-            previous = stats[
-                stats["week"] < target_week
-            ].copy()
+            previous = build_feature_history(
+                stats,
+                prior_carryover,
+                target_week,
+            )
 
             target = stats[
                 stats["week"] == target_week
@@ -4657,7 +4894,7 @@ def run_backtest(
     Evaluate the baseline projection against historical
     next-week outcomes.
 
-    This is intentionally simple in beta v1.
+    This is intentionally simple during beta.
     """
 
     results = []
@@ -4862,41 +5099,12 @@ def build_current_projections(
         f"Loaded {len(stats):,} player-week rows."
     )
 
-    snaps = load_snaps(season)
-
-    stats = merge_usage(
-        stats,
-        snaps,
-    )
+    stats = merge_usage(stats, load_snaps(season))
     stats["source_season"] = stats["season"]
     stats["source_week"] = stats["week"]
 
-    # Use the final three weeks of last season as carry-over context. They
-    # receive negative week numbers so they sort immediately before Week 1
-    # and participate in the same rolling windows without leaking future
-    # games from the current season.
-    prior_stats = load_current_stats(season - 1)
-    prior_tail = pd.DataFrame()
-
-    if not prior_stats.empty:
-        # Retain each player's own final three games, not merely the league's
-        # final three calendar weeks. This preserves history for players who
-        # missed a late regular-season or playoff game.
-        prior_tail = (
-            prior_stats
-            .sort_values(["player_id", "week"])
-            .groupby("player_id", group_keys=False)
-            .tail(3)
-            .copy()
-        )
-        prior_tail["source_season"] = prior_tail["season"]
-        prior_tail["source_week"] = prior_tail["week"]
-        prior_tail["week"] = (
-            prior_tail.groupby("player_id").cumcount()
-            - prior_tail.groupby("player_id")["player_id"].transform("size")
-        )
-        prior_tail["season"] = season
-
+    prior_tail = load_prior_season_carryover(season)
+    if not prior_tail.empty:
         print(
             f"Blending {len(prior_tail):,} player-week rows from "
             f"each player's final three games of {season - 1}."
@@ -4904,16 +5112,11 @@ def build_current_projections(
 
     # Only information available before the target week, plus the retained
     # prior-season carry-over context.
-    historical = stats[
-        stats["week"] < target_week
-    ].copy()
-
-    if not prior_tail.empty:
-        historical = pd.concat(
-            [prior_tail, historical],
-            ignore_index=True,
-            sort=False,
-        )
+    historical = build_feature_history(
+        stats,
+        prior_tail,
+        target_week,
+    )
 
     if historical.empty:
         raise RuntimeError(
@@ -5091,7 +5294,7 @@ def main():
     print()
     print("=" * 60)
     print(APP_NAME)
-    print("Beta v1")
+    print("v0.3.0-beta")
     print("=" * 60)
 
     print(

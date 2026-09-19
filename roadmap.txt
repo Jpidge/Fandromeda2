@@ -515,6 +515,26 @@ Context:
 
 
 =================================================
+BYE-WEEK AVAILABILITY
+=================================================
+
+A known team bye is not uncertainty and is not missing data.
+
+For a player whose NFL team has no scheduled game in the selected projection
+week:
+
+    projection = 0
+
+Apply this before normal projection display, lineup optimization, waiver
+ranking, and decision evaluation. Do not show a stale estimate or an empty
+value as though the player might play.
+
+Use the NFL schedule as the authoritative source. Add a deterministic test
+showing that a team with no target-week game receives a zero projection while
+the same player receives a normal projection in a scheduled week.
+
+
+=================================================
 RECENCY
 =================================================
 
