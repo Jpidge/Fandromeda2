@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FANDROMEDA · v0.3.0-beta
+FANDROMEDA · v0.4.0-beta
 =========================
 
 Personal fantasy football forecasting / dashboard system.
@@ -73,6 +73,7 @@ from fandromeda.pbp_scoring import (
     available_event_fields,
     summarize_pbp_scoring_events,
 )
+from fandromeda.yahoo_roster import capture_yahoo_roster
 
 try:
     import nflreadpy as nfl
@@ -93,6 +94,7 @@ except ImportError:
 # ============================================================
 
 APP_NAME = "FANDROMEDA"
+APP_VERSION = "v0.4.0-beta"
 WORDMARK_PATH = Path(
     r"C:\Users\jtpag\Documents\Python\ClaudeDash\fantasy_tool"
     r"\fantasy_tool\tools\wordmark_paths.svg"
@@ -105,6 +107,10 @@ CACHE_DIR = DATA_DIR / "cache"
 OUTPUT_DIR = DATA_DIR / "output"
 
 ROSTER_FILE = DATA_DIR / "my_roster.txt"
+YAHOO_BROWSER_PROFILE_DIR = DATA_DIR / "yahoo_browser_profile"
+YAHOO_MANUAL_BROWSER_PROFILE_DIR = DATA_DIR / "yahoo_manual_chrome_profile"
+YAHOO_EXPORT_DIR = DATA_DIR / "yahoo_exports"
+YAHOO_DEFAULT_ROSTER_URL = "https://football.fantasysports.yahoo.com/f1/893771"
 HTML_OUTPUT = Path("index.html")
 LEARNED_WEIGHT_MODEL_PATH = CACHE_DIR / "learned_weight_model.json"
 LEARNED_WEIGHT_REPORT_PATH = OUTPUT_DIR / "learned_metric_weights.csv"
@@ -367,6 +373,29 @@ def load_cached(
 # ============================================================
 
 
+def clean_yahoo_player_copy_name(value: object) -> str:
+    """Remove Yahoo UI labels concatenated onto names by whole-page copy."""
+
+    name = clean_text(value)
+    # A native Ctrl+A/Ctrl+C capture often yields e.g.
+    # ``Baker MayfieldVideo ForecastPlayer Note`` rather than Yahoo's
+    # separate display-name and label lines.  Injury letters immediately
+    # before a label (``Brock BowersDPlayer Note``) are UI metadata too.
+    name = re.sub(
+        r"(?:Video Forecast|New Player Note|No new player Notes).*?$",
+        "",
+        name,
+        flags=re.I,
+    )
+    name = re.sub(
+        r"(?:IR)?Player Note.*?$",
+        "",
+        name,
+        flags=re.I,
+    )
+    return clean_text(name)
+
+
 def parse_yahoo_roster(path: Path) -> pd.DataFrame:
     """
     Handles:
@@ -491,7 +520,7 @@ def parse_yahoo_roster(path: Path) -> pd.DataFrame:
         # The next nonblank line after a roster slot is the display name.
         player = ""
         for candidate in lines[i + 1:]:
-            candidate = clean_text(candidate)
+            candidate = clean_yahoo_player_copy_name(candidate)
             if candidate:
                 player = candidate
                 break
@@ -754,36 +783,83 @@ def build_player_match_table(
         method = "unmatched"
         confidence = 0.0
 
+        # Yahoo's visual copy can append an injury/eligibility marker directly
+        # to a name (for example ``Pittman Jr.O`` or ``TysonIR-R``).  Treat a
+        # stripped form as authoritative only when it exactly identifies one
+        # NFLverse player with the roster's team and position.  This avoids
+        # blindly trimming legitimate names that happen to end in D, O, etc.
+        status_name_variants = []
+        for suffix in ("ir r", "pup r", "cel"):
+            if normalized.endswith(suffix):
+                status_name_variants.append(normalized[: -len(suffix)].strip())
+        for suffix in ("o", "q", "d", "p"):
+            token = f" {suffix}"
+            if normalized.endswith(token):
+                status_name_variants.append(normalized[: -len(token)].strip())
+        if normalized and normalized[-1:] in {"o", "q", "d", "p"}:
+            status_name_variants.append(normalized[:-1].strip())
+
+        for status_normalized in dict.fromkeys(status_name_variants):
+            candidates = players_by_name.get(status_normalized, [])
+            if yahoo_team:
+                candidates = [
+                    candidate
+                    for candidate in candidates
+                    if normalize_team(candidate.get("team", "")) == yahoo_team
+                ]
+            if yahoo_position:
+                candidates = [
+                    candidate
+                    for candidate in candidates
+                    if clean_text(candidate.get("position", "")).upper()
+                    == yahoo_position
+                ]
+            if len(candidates) == 1:
+                matched = candidates[0]
+                method = "yahoo_status_suffix_exact"
+                confidence = 100.0
+                break
+
         # ----------------------------------------------------
         # Exact normalized name
         # ----------------------------------------------------
 
-        candidates = players_by_name.get(normalized, [])
+        if matched is None:
+            candidates = players_by_name.get(normalized, [])
 
-        if len(candidates) == 1:
-            matched = candidates[0]
-            method = "exact"
-            confidence = 100.0
-
-        elif len(candidates) > 1 and yahoo_team:
-            team_candidates = [
-                candidate
-                for candidate in candidates
-                if normalize_team(candidate.get("team", ""))
-                == yahoo_team
-            ]
-
-            if len(team_candidates) == 1:
-                matched = team_candidates[0]
-                method = "exact_name_team"
+            if len(candidates) == 1:
+                matched = candidates[0]
+                method = "exact"
                 confidence = 100.0
+
+            elif len(candidates) > 1 and yahoo_team:
+                team_candidates = [
+                    candidate
+                    for candidate in candidates
+                    if normalize_team(candidate.get("team", ""))
+                    == yahoo_team
+                ]
+
+                if len(team_candidates) == 1:
+                    matched = team_candidates[0]
+                    method = "exact_name_team"
+                    confidence = 100.0
+
+        # When a status suffix exists but NFLverse stores a different first
+        # name form (for example, Josh vs J.), use the cleaned form for the
+        # normal surname, last-name, and fuzzy fallbacks below.
+        fallback_normalized = (
+            status_name_variants[0]
+            if status_name_variants
+            else normalized
+        )
 
         # Yahoo commonly uses full first names where NFLverse stores an
         # initial (for example, "Justin Jefferson" vs "J.Jefferson").
         # Only accept this match when surname, initial, NFL team, and
         # position jointly identify one player.
-        if matched is None and normalized:
-            yahoo_parts = normalized.split()
+        if matched is None and fallback_normalized:
+            yahoo_parts = fallback_normalized.split()
 
             if len(yahoo_parts) >= 2:
                 surname_candidates = [
@@ -827,8 +903,8 @@ def build_player_match_table(
 
         # Last-name matching is a final safe fallback for NFLverse display
         # names that omit or vary the first name. Position must still agree.
-        if matched is None and normalized and yahoo_position:
-            last_name = normalized.split()[-1]
+        if matched is None and fallback_normalized and yahoo_position:
+            last_name = fallback_normalized.split()[-1]
             last_name_candidates = [
                 candidate
                 for candidates in players_by_name.values()
@@ -847,9 +923,9 @@ def build_player_match_table(
         # Fuzzy matching
         # ----------------------------------------------------
 
-        if matched is None and RAPIDFUZZ_AVAILABLE and normalized:
+        if matched is None and RAPIDFUZZ_AVAILABLE and fallback_normalized:
             result = process.extractOne(
-                normalized,
+                fallback_normalized,
                 all_names,
                 scorer=fuzz.ratio,
             )
@@ -887,6 +963,9 @@ def build_player_match_table(
         record = row.to_dict()
 
         if matched is not None:
+            if status_name_variants:
+                record["player"] = matched["display_name"]
+                record["player_normalized"] = matched["name_normalized"]
             record["nflverse_player_id"] = matched["player_id"]
             record["nflverse_name"] = matched["display_name"]
             record["nflverse_team"] = matched.get("team", "")
@@ -4073,7 +4152,7 @@ footer {{
 {unmatched_html}
 
 <footer>
-    FANDROMEDA · v0.3.0-beta
+    {APP_NAME} · {APP_VERSION}
 </footer>
 
 </main>
@@ -5391,10 +5470,79 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--refresh-yahoo-roster",
+        action="store_true",
+        help=(
+            "Open a visible Yahoo browser for a user-directed roster capture; "
+            "never stores Yahoo credentials"
+        ),
+    )
+
+    parser.add_argument(
+        "--yahoo-roster-url",
+        type=str,
+        default=YAHOO_DEFAULT_ROSTER_URL,
+        help="Yahoo league roster URL used by --refresh-yahoo-roster",
+    )
+
+    parser.add_argument(
+        "--yahoo-week",
+        type=str,
+        default=None,
+        help=(
+            "Open this Yahoo starters week (for example, 3), or use 'auto' "
+            "to match FANDROMEDA's upcoming projection week"
+        ),
+    )
+
+    parser.add_argument(
+        "--yahoo-attach-port",
+        type=int,
+        default=None,
+        help=(
+            "Attach roster capture to a user-launched local Chrome remote "
+            "debugging port instead of launching a browser"
+        ),
+    )
+
+    parser.add_argument(
+        "--yahoo-auto-copy",
+        action="store_true",
+        help=(
+            "When Yahoo blocks DOM roster reading, automatically send Ctrl+A "
+            "and Ctrl+C to the attached Yahoo tab, then validate its clipboard text"
+        ),
+    )
+
+    parser.add_argument(
+        "--yahoo-native-copy",
+        action="store_true",
+        help=(
+            "Use opt-in native Windows Ctrl+A/Ctrl+C for Yahoo's visual "
+            "roster component; requires pyautogui and pygetwindow"
+        ),
+    )
+
+    parser.add_argument(
+        "--yahoo-no-confirm",
+        action="store_true",
+        help=(
+            "Do not wait for an Enter keypress before capture; intended for "
+            "a logged-in, scheduled local Yahoo refresh"
+        ),
+    )
+
+    parser.add_argument(
         "--output",
         type=str,
         default=str(HTML_OUTPUT),
         help="HTML dashboard output",
+    )
+
+    parser.add_argument(
+        "--no-open-dashboard",
+        action="store_true",
+        help="Write the dashboard without opening a browser tab",
     )
 
     parser.add_argument(
@@ -5465,6 +5613,68 @@ def main():
 
     ensure_directories()
 
+    if args.refresh_yahoo_roster:
+        yahoo_capture_url = args.yahoo_roster_url
+        yahoo_capture_week = None
+        if args.yahoo_week is not None:
+            if args.yahoo_week.strip().lower() == "auto":
+                if args.week is not None:
+                    yahoo_capture_week = args.week
+                else:
+                    print("Determining FANDROMEDA's upcoming projection week...")
+                    yahoo_week_stats = load_current_stats(args.season, refresh=True)
+                    if yahoo_week_stats.empty:
+                        raise RuntimeError(
+                            "Unable to determine the upcoming Yahoo week from "
+                            "current player statistics."
+                        )
+                    yahoo_completed_weeks = pd.to_numeric(
+                        yahoo_week_stats["week"], errors="coerce"
+                    ).dropna()
+                    if yahoo_completed_weeks.empty:
+                        raise RuntimeError(
+                            "Current player statistics did not contain a completed week."
+                        )
+                    yahoo_capture_week = int(yahoo_completed_weeks.max()) + 1
+                print(f"Auto-selected Yahoo Week {yahoo_capture_week}.")
+            else:
+                try:
+                    yahoo_capture_week = int(args.yahoo_week)
+                except ValueError as exc:
+                    raise ValueError(
+                        "--yahoo-week must be a positive number or 'auto'."
+                    ) from exc
+                if yahoo_capture_week < 1:
+                    raise ValueError("--yahoo-week must be at least 1.")
+
+        if yahoo_capture_week is not None:
+            yahoo_league_url = yahoo_capture_url.split("/starters", 1)[0].rstrip("/")
+            yahoo_capture_url = (
+                f"{yahoo_league_url}/starters?week={yahoo_capture_week}&startertab=team"
+            )
+        captured_path, backup_path, source = capture_yahoo_roster(
+            yahoo_capture_url,
+            Path(args.roster),
+            (
+                YAHOO_MANUAL_BROWSER_PROFILE_DIR
+                if args.yahoo_attach_port is not None
+                else YAHOO_BROWSER_PROFILE_DIR
+            ),
+            YAHOO_EXPORT_DIR,
+            args.yahoo_attach_port,
+            args.yahoo_auto_copy,
+            args.yahoo_native_copy,
+            yahoo_capture_week is not None,
+            not args.yahoo_no_confirm,
+        )
+        print(f"Captured Yahoo roster from visible selector: {source}")
+        print(f"Working roster updated: {Path(args.roster).resolve()}")
+        print(f"Archived capture: {captured_path.resolve()}")
+        if backup_path is not None:
+            print(f"Previous roster backup: {backup_path.resolve()}")
+        print("Run python index.py next to refresh FANDROMEDA.")
+        return
+
     if args.build_scoring_events:
         print(f"Building play-by-play scoring events for {args.season}...")
         events = load_play_by_play_scoring_events(
@@ -5511,7 +5721,7 @@ def main():
     print()
     print("=" * 60)
     print(APP_NAME)
-    print("v0.3.0-beta")
+    print(APP_VERSION)
     print("=" * 60)
 
     print(
@@ -5833,19 +6043,20 @@ def main():
         encoding="utf-8",
     )
 
-    try:
-        dashboard_path = output_path.resolve()
-        dashboard_url = (
-            dashboard_path.as_uri()
-            + f"?generated={pd.Timestamp.now().value}"
-        )
-        opened = webbrowser.open_new_tab(dashboard_url)
-        if not opened and os.name == "nt":
-            os.startfile(str(dashboard_path))
-        elif not opened:
-            webbrowser.open(dashboard_path.as_uri())
-    except Exception as exc:
-        print(f"WARNING: unable to open dashboard automatically: {exc}")
+    if not args.no_open_dashboard:
+        try:
+            dashboard_path = output_path.resolve()
+            dashboard_url = (
+                dashboard_path.as_uri()
+                + f"?generated={pd.Timestamp.now().value}"
+            )
+            opened = webbrowser.open_new_tab(dashboard_url)
+            if not opened and os.name == "nt":
+                os.startfile(str(dashboard_path))
+            elif not opened:
+                webbrowser.open(dashboard_path.as_uri())
+        except Exception as exc:
+            print(f"WARNING: unable to open dashboard automatically: {exc}")
 
     # --------------------------------------------------------
     # Optional backtest.
