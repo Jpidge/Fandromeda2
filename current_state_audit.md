@@ -54,17 +54,38 @@ structure that the live dashboard uses.
 Saved learned-weight and direct-ML artifacts from before this change must be
 retrained before they are used as current live forecasts.
 
-## Scoring audit
+## Canonical scoring engine — phase 1
 
-The current player scoring calculation correctly implements core non-PPR
-offensive scoring: passing/rushing/receiving yardage, six-point passing TDs,
-interceptions, fumbles lost, and two-point conversions.
+Implemented and locally verified on 2026-09-19 with
+``python -m unittest discover -s tests -v``.
 
-It does not yet reconstruct rules requiring play-by-play or dedicated K/DEF
-data: 40+ yard TD bonuses, return yards/return TDs, offensive fumble-return
-TDs, exact kicker field-goal-yard scoring, or team-defense scoring tiers.
-Therefore the current historical holdout measures offensive-model behavior,
-not yet complete Fantasy Football Coalition Yahoo scoring.
+`fandromeda/scoring.py` is now the single source of league rules. It provides
+formulas and regression tests for core non-PPR offense, 40+ yard TD bonuses, return scoring,
+offensive fumble-return TDs, kicker PAT/field-goal-yard scoring, and every
+D/ST points-allowed tier. `standardize_player_stats` now uses that module for
+the currently available weekly offensive inputs.
+
+The remaining phase-2 work is data reconstruction, not scoring-rule design:
+play-by-play is required to populate long-TD bonuses, return events, and
+offensive fumble-return TDs; separate event aggregation is required for K/DEF.
+Until then, current historical ML evaluation remains an offensive-model
+benchmark using the core weekly fields.
+
+Play-by-play event caches for 2018–2026 have now been built and validated at
+the schema level. Available events are joined before canonical actual scoring.
+The nflreadpy schema does not expose a reliable player credit for offensive
+fumble-return touchdowns, so that rare rule remains explicitly unavailable
+rather than being silently assigned as zero. Cached ML artifacts trained on
+the former targets are stale and must be regenerated before use.
+Model files now include a scoring-version marker and are rejected when their
+target definition does not match the active canonical scoring engine.
+
+The revised 2025 holdout and both saved ML artifacts were regenerated after
+the PBP integration. Their current training size is 135,913 player-weeks and
+their scoring marker is ``ffc_yahoo_v1``. Team-defense event reconstruction
+and dedicated K/DEF projection models remain separate future work; offensive
+and kicker player scoring is now sourced through the canonical engine where
+the available NFLverse events permit it.
 
 ## Snapshot and Yahoo benchmark status
 

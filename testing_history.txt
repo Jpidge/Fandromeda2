@@ -1,6 +1,95 @@
 FANDROMEDA TESTING HISTORY
 ==========================
 
+2026-09-19 — Canonical scoring engine, phase 1
+------------------------------------------------
+Implementation status: verified locally with
+``python -m unittest discover -s tests -v``.
+
+The authoritative Fantasy Football Coalition rules now live in
+``fandromeda/scoring.py`` rather than being duplicated inside the application.
+The module contains exact formulas for core non-PPR offense, long-touchdown
+bonuses, return scoring, offensive fumble-return touchdowns, kicker scoring,
+and D/ST scoring including all points-allowed tiers. The existing weekly
+offensive-stat pipeline now calls this shared engine.
+
+Test command:
+    python -m unittest discover -s tests -v
+
+Phase-2 limitation:
+    Weekly player totals cannot identify long touchdowns, return events, or
+    all K/DST events. Historical nflverse play-by-play will be loaded and
+    aggregated before those event-specific fields are allowed into actuals,
+    backtests, or projections.
+
+2026-09-19 — Play-by-play scoring reconstruction, phase 2a
+-----------------------------------------------------------
+Implementation status: added; local test execution pending.
+
+``fandromeda/pbp_scoring.py`` reconstructs a compact player-week event table
+from nflverse play-by-play. It covers 40+ passing/rushing/receiving touchdown
+bonuses, return yards/touchdowns, offensive fumble-return touchdowns, PATs,
+and made field-goal distance. It rejects data without season/week and excludes
+postseason plays. It does not yet alter production scoring: first inspect a
+single cached season, then validate schema/event totals before integrating
+those fields into historical actuals and retraining.
+
+First controlled command:
+    python index.py --build-scoring-events --season 2025
+
+2026-09-19 — Play-by-play scoring reconstruction, phase 2b
+-----------------------------------------------------------
+Implementation status: added; local test execution pending.
+
+Validated cached player-week event tables are now joined to weekly NFLverse
+player statistics before the canonical scoring engine calculates actual
+points. This updates scoring for available 40+ touchdown bonuses and return
+events without inventing unavailable offensive fumble-return touchdowns.
+
+Model implication:
+    The historical targets have changed. Existing learned-weight and direct
+    ML model files must be retrained, and the 2025 holdout must be rerun,
+    before any new projection claims are made.
+
+Artifact safety:
+    Saved ML artifacts now record the scoring version. Models without the
+    current ``ffc_yahoo_v1`` marker are deliberately not applied, preventing
+    old target definitions from silently powering a newly scored dashboard.
+
+Runtime improvement:
+    Running ``--train-ml --learn-weights`` now builds the shared historical
+    training table once, then fits both model layers from that same immutable
+    in-memory table. It changes runtime, not the examples or model formulas.
+
+2026-09-19 — PBP-adjusted scoring holdout and model refresh
+------------------------------------------------------------
+Command:
+    python index.py --validate-ml
+    python index.py --train-ml --learn-weights --week 2
+
+Pipeline condition:
+    Available player-level play-by-play events are included in historical
+    actuals before feature creation and model fitting. The rare offensive
+    fumble-return touchdown remains unavailable in the source schema and is
+    not fabricated.
+
+2025 holdout results (trained 2018–2024):
+
+    Model                                MAE   RMSE   Bias    Within 3   Within 5
+    -----------------------------------  ----  -----  ------  ---------  ---------
+    Baseline projection                  4.19   6.19  +0.03     54.0%      70.2%
+    Machine Learned Weight Values        4.00   5.74  +0.10     54.4%      73.7%
+    Machine Learned Points Projection    3.97   5.73  +0.04     54.8%      73.6%
+
+Interpretation:
+    * This is a changed scoring target, not a direct apples-to-apples
+      regression against the former core-offense benchmark.
+    * Both ML models retain a measured advantage over the newly scored
+      baseline. Direct ML has the narrowest MAE, while learned weights remain
+      close and are the transparent primary projection.
+    * Both live model artifacts were retrained after validation on 135,913
+      historical player-weeks and now carry the ``ffc_yahoo_v1`` marker.
+
 STATUS UPDATE — 2026-09-19
 ---------------------------
 The results below were generated before a confirmed feature over-lag was

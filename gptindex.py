@@ -63,6 +63,17 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from fandromeda.scoring import (
+    FFC_SCORING,
+    SCORING_VERSION,
+    score_offensive_frame,
+)
+from fandromeda.pbp_scoring import (
+    EVENT_COLUMNS,
+    available_event_fields,
+    summarize_pbp_scoring_events,
+)
+
 try:
     import nflreadpy as nfl
 except ImportError:
@@ -115,23 +126,21 @@ ROSTER_SLOTS = {
 
 # CUSTOM YAHOO LEAGUE SCORING
 SCORING = {
-    "pass_yd": 0.04,
-    "pass_td": 6.0,
-    "int": -2.0,
-    "rush_yd": 0.10,
-    "rush_td": 6.0,
-    "rec": 0.0,
-    "rec_yd": 0.10,
-    "rec_td": 6.0,
-    "fum_lost": -2.0,
-    "two_pt": 2.0,
-    # Return/long-TD settings are retained for the upcoming play-by-play
-    # scoring module; weekly player totals alone do not identify 40+ yard TDs.
-    "return_yd": 0.04,
-    "return_td": 6.0,
-    "pass_td_40_bonus": 1.0,
-    "rush_td_40_bonus": 1.0,
-    "rec_td_40_bonus": 1.0,
+    "pass_yd": FFC_SCORING.passing_yard,
+    "pass_td": FFC_SCORING.passing_touchdown,
+    "int": FFC_SCORING.interception,
+    "rush_yd": FFC_SCORING.rushing_yard,
+    "rush_td": FFC_SCORING.rushing_touchdown,
+    "rec": FFC_SCORING.reception,
+    "rec_yd": FFC_SCORING.receiving_yard,
+    "rec_td": FFC_SCORING.receiving_touchdown,
+    "fum_lost": FFC_SCORING.fumble_lost,
+    "two_pt": FFC_SCORING.two_point_conversion,
+    "return_yd": FFC_SCORING.return_yard,
+    "return_td": FFC_SCORING.return_touchdown,
+    "pass_td_40_bonus": FFC_SCORING.long_touchdown_bonus,
+    "rush_td_40_bonus": FFC_SCORING.long_touchdown_bonus,
+    "rec_td_40_bonus": FFC_SCORING.long_touchdown_bonus,
 }
 
 # Recency weighting.
@@ -901,7 +910,10 @@ def build_player_match_table(
 # ============================================================
 
 
-def standardize_player_stats(df: pd.DataFrame) -> pd.DataFrame:
+def standardize_player_stats(
+    df: pd.DataFrame,
+    scoring_events: Optional[pd.DataFrame] = None,
+) -> pd.DataFrame:
 
     if df.empty:
         return df
@@ -1067,27 +1079,44 @@ def standardize_player_stats(df: pd.DataFrame) -> pd.DataFrame:
     else:
         df["opponent"] = ""
 
-    # If nflverse already supplies fantasy_points,
-    # keep it only if it appears to be standard scoring.
-    # We calculate our own points to guarantee league scoring.
-    df["fantasy_points_std"] = (
-        df["passing_yards"] * SCORING["pass_yd"]
-        + df["passing_tds"] * SCORING["pass_td"]
-        + df["interceptions"] * SCORING["int"]
-        + df["rushing_yards"] * SCORING["rush_yd"]
-        + df["rushing_tds"] * SCORING["rush_td"]
-        + df["receptions"] * SCORING["rec"]
-        + df["receiving_yards"] * SCORING["rec_yd"]
-        + df["receiving_tds"] * SCORING["rec_td"]
-        + df["fumbles_lost"] * SCORING["fum_lost"]
-        + df["two_point"] * SCORING["two_pt"]
-    )
+    if scoring_events is not None and not scoring_events.empty:
+        required_event_keys = {"season", "week", "player_id"}
+        missing_event_keys = required_event_keys.difference(scoring_events.columns)
+        if missing_event_keys:
+            raise ValueError(
+                "Scoring-event table is missing required keys: "
+                + ", ".join(sorted(missing_event_keys))
+            )
 
-    df["td_points"] = (
-        df["passing_tds"] * SCORING["pass_td"]
-        + df["rushing_tds"] * SCORING["rush_td"]
-        + df["receiving_tds"] * SCORING["rec_td"]
-    )
+        events = scoring_events.copy()
+        missing_event_columns = set(EVENT_COLUMNS).difference(events.columns)
+        if missing_event_columns:
+            raise ValueError(
+                "Scoring-event table is missing event columns: "
+                + ", ".join(sorted(missing_event_columns))
+            )
+        df["player_id"] = df["player_id"].astype("string")
+        events["player_id"] = events["player_id"].astype("string")
+        event_payload = events[
+            ["season", "week", "player_id", *EVENT_COLUMNS]
+        ].rename(columns={event: f"_pbp_{event}" for event in EVENT_COLUMNS})
+        df = df.merge(
+            event_payload,
+            on=["season", "week", "player_id"],
+            how="left",
+            validate="many_to_one",
+        )
+        for event in EVENT_COLUMNS:
+            source = f"_pbp_{event}"
+            df[event] = pd.to_numeric(df[source], errors="coerce").fillna(0.0)
+            df = df.drop(columns=[source])
+
+    # Weekly player stats currently supply the core offensive fields. The same
+    # canonical engine will include event-level fields after phase 2 connects
+    # play-by-play reconstruction.
+    scored = score_offensive_frame(df)
+    df["fantasy_points_std"] = scored["fantasy_points"]
+    df["td_points"] = scored["touchdown_points"]
 
     df["non_td_fantasy_points"] = (
         df["fantasy_points_std"] - df["td_points"]
@@ -1111,7 +1140,90 @@ def load_current_stats(
         force=refresh,
     )
 
-    return standardize_player_stats(raw)
+    return standardize_player_stats(
+        raw,
+        load_scoring_event_adjustments(season),
+    )
+
+
+def load_scoring_event_adjustments(season: int) -> pd.DataFrame:
+    """Read previously validated PBP event adjustments without downloading."""
+
+    path = cache_path(f"scoring_events_{season}")
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_parquet(path)
+    except Exception as exc:
+        print(f"WARNING: unable to read scoring events for {season}: {exc}")
+        return pd.DataFrame()
+
+
+def load_play_by_play_scoring_events(
+    season: int,
+    refresh: bool = False,
+) -> pd.DataFrame:
+    """Cache raw PBP, then persist a compact auditable player-week event table.
+
+    This is intentionally opt-in. It does not silently change historical
+    scoring until the downloaded schema and reconstructed events are reviewed.
+    """
+
+    def load_season_pbp():
+        # nflreadpy releases have accepted either the explicit ``seasons``
+        # keyword or a positional season collection. Support both without
+        # hiding a real download/schema failure.
+        try:
+            return nfl.load_pbp(seasons=[season])
+        except TypeError:
+            return nfl.load_pbp([season])
+
+    raw = load_cached(
+        f"play_by_play_{season}",
+        load_season_pbp,
+        force=refresh,
+    )
+    if raw.empty:
+        return pd.DataFrame()
+
+    events = summarize_pbp_scoring_events(raw)
+    events.attrs["available_event_fields"] = available_event_fields(raw)
+    event_path = cache_path(f"scoring_events_{season}")
+    events.to_parquet(event_path, index=False)
+    return events
+
+
+def audit_scoring_event_impacts(season: int) -> pd.DataFrame:
+    """Show exactly how cached PBP events change weekly player actuals."""
+
+    raw = load_cached(
+        f"player_stats_{season}",
+        lambda: nfl.load_player_stats(season, summary_level="week"),
+    )
+    events = load_scoring_event_adjustments(season)
+    if raw.empty or events.empty:
+        raise RuntimeError(
+            "Both weekly player stats and cached scoring events are required. "
+            "Run --build-scoring-events first."
+        )
+
+    core = standardize_player_stats(raw)
+    adjusted = standardize_player_stats(raw, events)
+    keys = ["player_id", "season", "week"]
+    audit = core[keys + ["fantasy_points_std"]].merge(
+        adjusted[
+            keys + ["player_name", "position", "team", "fantasy_points_std"]
+        ],
+        on=keys,
+        how="inner",
+        suffixes=("_core", "_adjusted"),
+        validate="one_to_one",
+    )
+    audit["pbp_adjustment"] = (
+        audit["fantasy_points_std_adjusted"]
+        - audit["fantasy_points_std_core"]
+    )
+    return audit.sort_values("pbp_adjustment", ascending=False)
 
 
 def load_current_injury_status(
@@ -2961,7 +3073,7 @@ def build_html(
                     {injury_badge}
                     {depth_badge}
                     <span class="player-team">
-                        ({html_escape(row.get("team", ""))} —
+                        ({html_escape(str(row.get("team", "")).upper())} —
                         {html_escape(row.get("position", ""))})
                     </span>
                 </td>
@@ -2998,7 +3110,7 @@ def build_html(
 
         signal_description = html_escape(signal_tooltip(row))
         chips_html = signal_chips_html(row)
-        waiver_team = clean_text(row.get("team", "")) or "—"
+        waiver_team = (clean_text(row.get("team", "")) or "—").upper()
 
         waiver_rows.append(
             f"""
@@ -3261,7 +3373,6 @@ h2 {{
 }}
 
 .player-name {{
-    font-size: 17px;
     font-weight: 700;
 }}
 
@@ -3311,15 +3422,33 @@ h2 {{
     white-space: nowrap;
 }}
 
-.waiver-filter select {{
+.waiver-picker {{
+    display: inline-block;
+    position: relative;
     margin-left: 6px;
-    padding: 7px 9px;
+}}
+
+.waiver-filter select {{
+    appearance: none;
+    margin: 0;
+    padding: 7px 30px 7px 9px;
     color: var(--text);
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: 8px;
     font: inherit;
     cursor: pointer;
+}}
+
+.waiver-picker::after {{
+    content: "⌄";
+    position: absolute;
+    top: 50%;
+    right: 10px;
+    transform: translateY(-50%);
+    line-height: 1;
+    color: var(--muted);
+    pointer-events: none;
 }}
 
 .team-picker {{
@@ -3351,7 +3480,10 @@ h2 {{
 .team-picker-button::after {{
     content: "⌄";
     position: absolute;
+    top: 50%;
     right: 10px;
+    transform: translateY(-50%);
+    line-height: 1;
     color: var(--muted);
 }}
 
@@ -3862,10 +3994,12 @@ footer {{
         <h2>Waiver Wire — Discovery View</h2>
         <label class="waiver-filter" for="waiver-position-filter">
             Position
-            <select id="waiver-position-filter">
-                <option value="">All positions</option>
-                {waiver_position_options}
-            </select>
+            <span class="waiver-picker">
+                <select id="waiver-position-filter">
+                    <option value="">All positions</option>
+                    {waiver_position_options}
+                </select>
+            </span>
         </label>
     </div>
 
@@ -4385,6 +4519,7 @@ def train_learned_weight_model(
     model = {
         "version": 1,
         "model_type": "ridge_regression",
+        "scoring_version": SCORING_VERSION,
         "training_examples": int(len(train)),
         "features": features,
         "feature_means": {key: float(value) for key, value in means.items()},
@@ -4420,7 +4555,15 @@ def load_learned_weight_model() -> Optional[Dict]:
             "features", "feature_means", "feature_stds",
             "feature_weights", "intercept", "position_weights",
         }
-        return model if required.issubset(model) else None
+        if not required.issubset(model):
+            return None
+        if model.get("scoring_version") != SCORING_VERSION:
+            print(
+                "WARNING: saved learned weights use an older scoring version; "
+                "retrain with --learn-weights."
+            )
+            return None
+        return model
     except (OSError, ValueError, TypeError):
         return None
 
@@ -4566,6 +4709,7 @@ def train_direct_ml_model(
                     "features": features,
                     "training_examples": int(len(train)),
                     "trained_for_season": int(season),
+                    "scoring_version": SCORING_VERSION,
                     "model_type": "XGBoost direct next-week forecast",
                 },
                 indent=2,
@@ -4599,6 +4743,12 @@ def apply_saved_direct_ml_model(
         metadata = json.loads(
             DIRECT_ML_METADATA_PATH.read_text(encoding="utf-8")
         )
+        if metadata.get("scoring_version") != SCORING_VERSION:
+            print(
+                "WARNING: saved direct ML model uses an older scoring version; "
+                "retrain with --train-ml."
+            )
+            return None
         features = metadata["features"]
         if not isinstance(features, list) or not features:
             return None
@@ -4656,7 +4806,10 @@ def build_walk_forward_training(
                 ),
         )
 
-        stats = standardize_player_stats(stats)
+        stats = standardize_player_stats(
+            stats,
+            load_scoring_event_adjustments(season),
+        )
 
         if stats.empty:
             continue
@@ -4914,7 +5067,10 @@ def run_backtest(
                 ),
         )
 
-        stats = standardize_player_stats(stats)
+        stats = standardize_player_stats(
+            stats,
+            load_scoring_event_adjustments(season),
+        )
 
         if stats.empty:
             continue
@@ -5277,6 +5433,24 @@ def parse_args():
         help="Ignore cached files",
     )
 
+    parser.add_argument(
+        "--build-scoring-events",
+        action="store_true",
+        help=(
+            "Download/cache play-by-play for --season and build a compact "
+            "auditable scoring-event table; does not retrain models"
+        ),
+    )
+
+    parser.add_argument(
+        "--audit-scoring-events",
+        action="store_true",
+        help=(
+            "Audit how cached PBP event adjustments change player-week "
+            "actuals for --season; performs no downloads or writes"
+        ),
+    )
+
     return parser.parse_args()
 
 
@@ -5290,6 +5464,49 @@ def main():
     args = parse_args()
 
     ensure_directories()
+
+    if args.build_scoring_events:
+        print(f"Building play-by-play scoring events for {args.season}...")
+        events = load_play_by_play_scoring_events(
+            args.season,
+            refresh=args.force_download,
+        )
+        if events.empty:
+            raise RuntimeError("No play-by-play scoring events were produced.")
+        print(f"Scoring-event player-weeks: {len(events):,}")
+        print("Reconstructed event totals:")
+        for event, value in events[list(EVENT_COLUMNS)].sum().items():
+            if value:
+                print(f"  {event}: {value:,.0f}")
+        unavailable = [
+            event
+            for event, available in events.attrs["available_event_fields"].items()
+            if not available
+        ]
+        if unavailable:
+            print("Unavailable from this PBP schema:")
+            for event in unavailable:
+                print(f"  {event}")
+        print(f"Raw cache: {cache_path(f'play_by_play_{args.season}')}")
+        print(f"Event table: {cache_path(f'scoring_events_{args.season}')}")
+        return
+
+    if args.audit_scoring_events:
+        audit = audit_scoring_event_impacts(args.season)
+        changed = audit[audit["pbp_adjustment"].abs().gt(0)].copy()
+        print(f"PBP-adjusted player-weeks: {len(changed):,}")
+        print(
+            "Total additional league points from available PBP events: "
+            f"{changed['pbp_adjustment'].sum():,.1f}"
+        )
+        display = [
+            "player_name", "position", "team", "week",
+            "fantasy_points_std_core", "pbp_adjustment",
+            "fantasy_points_std_adjusted",
+        ]
+        print("\nLargest player-week adjustments:")
+        print(changed[display].head(20).to_string(index=False))
+        return
 
     print()
     print("=" * 60)
@@ -5472,13 +5689,17 @@ def main():
     # The direct ML forecast is intentionally separate from the main
     # projection. It can be compared in the table but never silently
     # overrides the transparent baseline or learned-weight projection.
-    if args.train_ml:
-        print("\nBuilding historical direct-ML training data...")
+    training = None
+    if args.train_ml or args.learn_weights:
+        print("\nBuilding shared historical ML training data...")
         training_seasons = list(
             range(max(1999, args.season - 8), args.season)
         )
         training = build_walk_forward_training(training_seasons)
-        if not training.empty:
+
+    if args.train_ml:
+        print("\nTraining direct ML forecast...")
+        if training is not None and not training.empty:
             train_direct_ml_model(training, args.season)
 
     projections["projection"] = projections["baseline_projection"]
@@ -5497,16 +5718,9 @@ def main():
 
     if args.learn_weights:
         print("\nTraining transparent learned metric weights...")
-        training_seasons = list(
-            range(
-                max(1999, args.season - 8),
-                args.season,
-            )
-        )
-        training = build_walk_forward_training(training_seasons)
-        learned_weight_model, weight_report = train_learned_weight_model(
-            training
-        )
+        if training is None:
+            training = pd.DataFrame()
+        learned_weight_model, weight_report = train_learned_weight_model(training)
 
         if learned_weight_model is not None:
             save_learned_weight_model(learned_weight_model)
