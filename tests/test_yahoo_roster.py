@@ -11,6 +11,17 @@ from gptindex import build_player_match_table, normalize_name, parse_yahoo_roste
 
 
 class YahooRosterCaptureTests(unittest.TestCase):
+    def test_inline_yahoo_injury_status_is_preserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "roster.txt"
+            path.write_text("\n".join([
+                "Purple Reign \ue001", "Pos", "Player", "W/R/T",
+                "Puka NacuaOVideo ForecastNew Player Note", "LAR - WR",
+            ]), encoding="utf-8")
+            roster = parse_yahoo_roster(path)
+            self.assertEqual(roster.loc[0, "player"], "Puka Nacua")
+            self.assertEqual(roster.loc[0, "yahoo_status"], "O")
+
     def test_capture_archives_and_backs_up_existing_roster(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -390,3 +390,18 @@ Release remains on hold pending that workflow review and final artifact review.
 Purple Reign (Yahoo team ID 10) confirmed via signed-in My Team link. Week 3
 live roster shows Corum at flex and Nacua Out on bench; applied those changes
 to the saved roster after backup. Other managers' saved rows were preserved.
+2026-09-21 — Yahoo inline injury-status dashboard fix
+------------------------------------------------------
+Root cause:
+    Yahoo's copied roster text can place a status directly before its UI label,
+    such as Puka NacuaOVideo Forecast. The parser removed the label but did not
+    retain the O status for dashboard display.
+
+Change:
+    Roster parsing now preserves yahoo_status. Dashboard rows display the
+    status badge and tooltip. Puka Nacua now renders O for Purple Reign.
+
+Validation:
+    PASS: 47 short tests, including inline Yahoo status parsing.
+    PASS: cached dashboard rebuild shows Puka Nacua with an O badge.
+    No long historical validation run required.

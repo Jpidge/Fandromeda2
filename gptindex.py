@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FANDROMEDA · v0.6.1-beta
+FANDROMEDA · v0.6.2-beta
 =========================
 
 Personal fantasy football forecasting / dashboard system.
@@ -101,7 +101,7 @@ except ImportError:
 # ============================================================
 
 APP_NAME = "FANDROMEDA"
-APP_VERSION = "v0.6.1-beta"
+APP_VERSION = "v0.6.2-beta"
 WORDMARK_PATH = Path(
     r"C:\Users\jtpag\Documents\Python\ClaudeDash\fantasy_tool"
     r"\fantasy_tool\tools\wordmark_paths.svg"
@@ -530,7 +530,12 @@ def parse_yahoo_roster(path: Path) -> pd.DataFrame:
 
         # The next nonblank line after a roster slot is the display name.
         player = ""
+        yahoo_status = ""
         for candidate in lines[i + 1:]:
+            raw_candidate = clean_text(candidate)
+            status_match = re.search(r"(IR-R|PUP-R|IR|O|Q|D|P)(?=(?:Video Forecast|New Player Note|Player Note|No new player Notes|$))", raw_candidate, re.I)
+            if status_match:
+                yahoo_status = status_match.group(1).upper()
             candidate = clean_yahoo_player_copy_name(candidate)
             if candidate:
                 player = candidate
@@ -538,6 +543,8 @@ def parse_yahoo_roster(path: Path) -> pd.DataFrame:
 
         if not player:
             continue
+        if yahoo_status in {"O", "Q"} and player.upper().endswith(yahoo_status):
+            player = player[:-1].strip()
 
         position = slot
         team = ""
@@ -565,6 +572,7 @@ def parse_yahoo_roster(path: Path) -> pd.DataFrame:
                 "team": team,
                 "position": position,
                 "slot": slot,
+                "yahoo_status": yahoo_status,
             }
         )
 
@@ -638,7 +646,7 @@ def standardize_roster_columns(df: pd.DataFrame) -> pd.DataFrame:
             f"Detected columns: {list(df.columns)}"
         )
 
-    for col in ["manager", "team", "position", "slot"]:
+    for col in ["manager", "team", "position", "slot", "yahoo_status"]:
         if col not in df.columns:
             df[col] = ""
 
@@ -662,6 +670,7 @@ def standardize_roster_columns(df: pd.DataFrame) -> pd.DataFrame:
             "team",
             "position",
             "slot",
+            "yahoo_status",
             "player_normalized",
         ]
     ].drop_duplicates()
@@ -1052,6 +1061,7 @@ def standardize_player_stats(
             "pass_yds",
             "passing_yd",
         ],
+        "yahoo_status": ["yahoo_status", "injury_status", "player_status"],
         "passing_attempts": [
             "passing_attempts",
             "pass_attempts",
@@ -3063,6 +3073,13 @@ def build_html(
             injury_badge = (
                 f'<span class="injury-flag {badge_class}" tabindex="0" '
                 f'data-tooltip="{note}">{html.escape(flag)}</span>'
+            )
+        yahoo_status = clean_text(row.get("yahoo_status", "")).upper()
+        if yahoo_status:
+            injury_badge = (
+                f'<span class="injury-flag injury-out" tabindex="0" '
+                f'data-tooltip="Yahoo roster status: {html.escape(yahoo_status)}">'
+                f'{html.escape(yahoo_status)}</span>'
             )
         depth = depth_by_player.get(player_id)
         depth_badge = ""

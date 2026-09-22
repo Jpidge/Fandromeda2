@@ -4,6 +4,14 @@ Version changes are recorded here before they are treated as releases. A
 version bump means the application behavior or published artifacts changed; it
 does not by itself mean a GitHub release or deployment has happened.
 
+## v0.6.2-beta — 2026-09-21
+
+- Preserve inline Yahoo injury markers in roster captures.
+- Display Yahoo Out, Questionable, Doubtful, and related roster statuses on
+  dashboard player rows, including Puka Nacua's current Out status.
+- Added regression coverage for inline status parsing; no historical retraining
+  is required.
+
 ## v0.6.1-beta — 2026-09-21
 
 - Publish the accumulated Project Lab, Yahoo import, roster snapshot, and
