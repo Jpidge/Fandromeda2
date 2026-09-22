@@ -87,13 +87,53 @@ and dedicated K/DEF projection models remain separate future work; offensive
 and kicker player scoring is now sourced through the canonical engine where
 the available NFLverse events permit it.
 
-## Snapshot and Yahoo benchmark status
+## Prediction snapshot store
 
-No immutable production-prediction snapshot store exists yet. Cached NFLverse
-files are source-data caches, not records of what Fandromeda predicted at a
-specific pre-kickoff time. Numeric Yahoo projections are not yet ingested.
+Implemented and locally verified on 2026-09-20. Every normal projection run
+now writes one new immutable Parquet file in
+`data/snapshots/predictions/` and appends one readable record to
+`data/snapshots/snapshot_index.csv`. The mutable `data/output/projections.csv`
+remains the live dashboard export and is not used as history.
+
+Each snapshot stores the UTC capture time, season/week, player identity,
+baseline / learned-weight / direct-ML / final displayed projections, range,
+classification, depth context, and the app, feature, scoring, and primary
+model versions. `yahoo_projection` and `actual_points` are intentionally null
+at capture time; later evaluation work may populate comparisons without
+rewriting the original forecast values. A unique ID prevents same-second runs
+from replacing one another. `python index.py --list-snapshots` prints the
+human-readable index without loading every Parquet file.
+
+Cached NFLverse files are source-data caches, not prediction records. Numeric
+Yahoo projections are not yet ingested.
 
 ## Validation status
+
+### 2026-09-21 continuation — snapshot population correction
+
+The original v1 writer saved the full NFL projection pool (2,176 rows in the
+first snapshot), not the league roster. Normal runs now build v2 snapshots
+from roster membership, retaining fantasy manager, slot, and missing forecast
+status. The current roster export contains 171 individual players and 13 D/ST
+entries across 12 managers. Team defenses use separate `DEF:<team>` IDs;
+unresolved players cannot join to blank projection IDs. Old snapshot files
+and manifest rows are preserved. Full-pool live/waiver exports are unchanged.
+
+Temporal/scoring work and the 10 p.m. roster automation are confirmed complete
+by the project owner. Yahoo numeric projection capture remains a raw-text
+prototype; it has no numeric parser or benchmark ingestion yet. Snapshot
+kickoff eligibility and trained-model provenance remain future benchmark work.
+
+Verified after correction: all 25 tests pass, including six snapshot tests.
+A temporary real-roster Parquet roundtrip retained 184 entries, with 169
+forecasts and 15 unavailable (13 D/ST plus two WRs). Existing snapshot and
+manifest hashes were unchanged. The production writer will use roster scope
+on its next normal run; no synthetic production capture was created.
+
+A real Week 3 Yahoo matchup clipboard sample was captured on 2026-09-21
+with bench and IR visible (31 entries across two managers), saved under
+`data/yahoo_projection_exports/` with layout notes. This is a parser-development
+sample only, not a kickoff-certified benchmark observation.
 
 The first aggregate 2025 holdout was useful for exercising the evaluation
 pipeline, but it was produced before the over-lag correction. It must not be

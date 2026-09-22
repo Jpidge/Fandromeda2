@@ -242,3 +242,151 @@ Interpretation:
     * These values are the current benchmark for future feature work. The
       saved live ML artifacts must be retrained before use because the
       feature pipeline changed.
+
+
+2026-09-20 — Prediction snapshot store regression check
+-------------------------------------------------------
+Purpose:
+    Confirm that each published forecast is retained as a distinct,
+    append-only pre-evaluation record rather than being overwritten by the
+    live projections CSV.
+
+Commands:
+    python -m unittest discover -s tests -p "test_snapshots.py" -v
+    python index.py --no-open-dashboard
+    python index.py --list-snapshots
+
+Expected result:
+    * The unit tests pass.
+    * The normal run prints one new Parquet snapshot path and the CSV index.
+    * The index lists the new capture timestamp, target week, row count, and
+      primary projection model.
+    * A second normal run creates another snapshot rather than replacing the
+      first. Use `--no-snapshot` only for deliberate diagnostic reruns.
+
+Result:
+    PASS. All three snapshot regression tests completed successfully. The
+    first live snapshot stored 2,176 player rows in a 108 KB Parquet file and
+    added a readable index row identifying the learned-weight model as the
+    primary projection. The immutable first record correctly retains the app
+    version that the source reported at capture time; the stale source label
+    was then corrected from v0.4.0-beta to v0.5.0-beta for future runs.
+
+
+2026-09-21 — League-roster snapshot correction and Yahoo sample
+-------------------------------------------------------------
+Root cause:
+    The snapshot writer received the entire NFL forecast pool, rather than
+    the league roster. The latest exports contain 2,221 NFL projections but
+    184 roster entries: 171 individual players and 13 D/ST across 12 managers.
+
+Change:
+    Normal runs now save roster-scoped schema-v2 snapshots with manager,
+    slot, team-defense identity, and explicit missing-forecast status. Legacy
+    v1 snapshots and their index rows are preserved. Waiver/live exports and
+    the automated roster-refresh scripts were not changed.
+
+Validation:
+    PASS: python -B -m unittest discover -s tests -v — 25 tests, including
+    six snapshot tests. Executed with the bundled Python 3.12 interpreter
+    plus isolated workspace dependencies (nflreadpy, pyarrow, rapidfuzz).
+    PASS: real-export temporary Parquet roundtrip retained 184 entries,
+    12 managers, 169 forecasts and 15 explicit unavailable forecasts.
+    Missing individual forecasts: Jordyn Tyson and Marvin Harrison Jr.;
+    the remaining 13 are D/ST. Missing is not converted to zero.
+    PASS: existing snapshot/manifest hashes unchanged across the smoke test.
+    PASS: --list-snapshots displays legacy schema versions and scope note.
+    No fresh production forecast was generated or old snapshot rewritten.
+
+Yahoo follow-up:
+    Saved an actual Week 3 matchup clipboard sample after expanding bench
+    players: 31 entries from Purple Reign and Belichick Yo'self, including IR.
+    Sample and parser requirements are in data/yahoo_projection_exports/.
+    The capture validator accepts it. Numeric parsing, whole-league capture,
+    identity reconciliation and kickoff-safe benchmarking remain pending.
+
+
+2026-09-21 — Defensive matchup feature candidate holdout
+----------------------------------------------------------
+Command:
+    python index.py --validate-ml --no-open-dashboard --no-snapshot
+
+Experiment:
+    Walk-forward training and 2025 holdout evaluation with a candidate
+    feature for prior-week fantasy points allowed by opponent and position.
+    The feature is isolated to validation and is not enabled in live
+    production forecasts or saved live model artifacts.
+
+Results (2025 holdout, offense QB/RB/WR/TE):
+
+    Model                                MAE         RMSE        Bias
+    -----------------------------------  ----------  ----------  ---------
+    Baseline projection                  4.190000    6.190000    +0.030000
+    Machine Learned Weight Values        3.997854    5.740614    +0.096499
+    Machine Learned Points Projection    3.970540    5.728705    +0.050300
+
+Comparison with the locked pre-feature benchmark:
+    * Learned weights improved by approximately 0.0008 MAE, effectively
+      neutral at this sample size.
+    * Direct ML worsened by approximately 0.0010 MAE.
+    * The candidate does not show a reliable improvement on this single
+      temporal holdout, so it remains research-only.
+
+Next decision:
+    Keep the matchup feature behind the validation flag. Require another
+    time-based fold and/or a meaningful improvement before retraining and
+    promoting production models.
+
+
+2026-09-21 — Defensive matchup candidate second temporal fold
+---------------------------------------------------------------
+Command:
+    python index.py --validate-ml --season 2025 --no-open-dashboard --no-snapshot
+
+Holdout:
+    Train 2017–2023; test 2024.
+
+Results (offense QB/RB/WR/TE):
+    Baseline projection MAE: 4.15
+    Machine Learned Weight Values MAE: 3.99
+    Machine Learned Points Projection MAE: 3.98
+
+Interpretation:
+    ML improvement over the baseline is consistent with the 2025 fold. The
+    defensive matchup candidate itself is still not isolated as a meaningful
+    incremental improvement, so it remains validation-only.
+2026-09-21 — Archived validation review workflow
+------------------------------------------------
+Both completed folds reproduced the earlier console metrics. Preserved the
+full multi-fold transcript, full-precision 2025 CSV, and rounded 2024 offensive
+metrics in data/output/validation_runs. The 2024 full-precision report had been
+overwritten by the old multi-fold loop and cannot be recovered from that CSV.
+New folds now receive separate immutable report filenames and fold metadata.
+--validation-report exits before the live data and training pipeline.
+Project Lab reads archived results. No historical model training was rerun.
+Validation: 44 tests passed using bundled Python with existing test-deps;
+report-only CLI smoke test passed; gptindex.py syntax parsed successfully.
+Interpretation correction: the 2024 candidate versus heuristic comparison
+does not isolate the matchup feature effect; matched feature-off ML results
+would be needed. No production promotion is justified by this comparison.
+User team: Purple Reign. The roster file contains all league teams; its first
+team, Vader's Raiders, is not evidence of the user's team identity.
+2026-09-21 — Release review correction (supersedes matchup conclusions)
+---------------------------------------------------------------------
+Review found that attach_defensive_history joined the offensive player's own
+team to defensive history. Walk-forward features also retained the last game's
+opponent, and history preferred generic fantasy_points over league scoring.
+The original 2024/2025 metrics are preserved but cannot establish the benefit
+or neutrality of opponent matchup features. Project Lab and report-only output
+now label legacy results invalid for that purpose without rewriting archives.
+Corrected research path resolves the target-week opponent from schedule team
+identity, sets the feature season explicitly, joins opponent defense, and
+prefers fantasy_points_std. No saved production models were retrained.
+Validation: 46 short tests pass, including an integration test separating own
+team, stale opponent, target opponent, prior-season identity, and target points.
+No full historical rerun requested or performed. Before a future research run,
+implement paired feature-off/on evaluation with shared feature construction.
+Release remains on hold pending that workflow review and final artifact review.
+Purple Reign (Yahoo team ID 10) confirmed via signed-in My Team link. Week 3
+live roster shows Corum at flex and Nacua Out on bench; applied those changes
+to the saved roster after backup. Other managers' saved rows were preserved.

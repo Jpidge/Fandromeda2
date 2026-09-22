@@ -2,6 +2,7 @@ data/my_roster.txt
 data/yahoo_browser_profile/
 data/yahoo_manual_chrome_profile/
 data/yahoo_exports/
+data/yahoo_projection_exports/
 data/logs/
 data/secrets/
 data/cache/
@@ -14,3 +15,7 @@ config.json
 oauth_tokens.json 
 __pycache__/
 *.pyc
+data/snapshots/
+data/output/validation_runs/
+index.html
+project_lab.html

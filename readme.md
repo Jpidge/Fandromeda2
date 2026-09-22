@@ -5,8 +5,17 @@ Cosmic Fantasy Analytics & Waiver Intelligence Hub
 1. Update Roster: Update data/my_roster.txt with current league roster (copy paste table from Yahoo)
 2. Generate dashboard: Run python index.py
 
+Creator research report: Run `python index.py --project-report`. This writes
+`project_lab.html`, a separate human-readable view of holdout validation,
+snapshot history, Yahoo import coverage, and benchmark readiness. It is for
+project development and is not linked from the fantasy-manager dashboard.
+
 ## Features
 * **Interactive Dashboard:** Filter by team, click headers to sort, click names for detailed stats, hover or tap on values for detailed explanations.
+
+* **Prediction history:** Each normal run saves an immutable Parquet snapshot in `data/snapshots/predictions/` plus a readable `data/snapshots/snapshot_index.csv` row. This preserves exactly what FANDROMEDA forecast before later scoring and comparison work. Run `python index.py --list-snapshots` to inspect the history; use `--no-snapshot` only for a deliberate diagnostic rerun.
+
+  From snapshot schema v2, normal runs retain the league roster only, with fantasy manager, roster slot, and forecast availability. The current roster has 171 individual players plus 13 D/ST entries (184 total). Missing forecasts remain null; D/ST uses team-unit identities. Earlier v1 files contain the full NFL projection pool and remain unchanged. Waiver projections still use the full pool. Snapshots are capture-time records; kickoff eligibility and comparable Yahoo capture times must still be checked before benchmarking.
 
 * **Machine Learned Points Projection:*
 The XGBoost ML model trained on historical, leakage-safe player-weeks to predict next-week fantasy points directly. It considers the same pre-game history plus position indicators; it is a comparison forecast and does not replace Proj. Pts. A dash means the direct model has not been trained or is unavailable on this computer.
@@ -49,3 +58,15 @@ An internal 20–90 consistency score, not a probability. It starts at 50, then 
 
 ## Security Note
 Keep API credentials out of tracking. Ensure `.env` is listed in `.gitignore`.
+# Reviewing completed validation
+
+Run `python index.py --validation-report` to read saved experiment metrics
+without downloading data, rebuilding features, or training models. Project Lab
+also displays the archived offensive holdout results. Future completed folds
+are saved separately under `data/output/validation_runs/`, with training years,
+holdout year, experiment, timestamp, and source precision. The legacy holdout
+CSV remains a latest-result export.
+
+Use full historical validation only for deliberate model experiments. Repeating
+an unchanged experiment is not necessary for routine dashboard changes. These
+archives cache results, not training feature tables.

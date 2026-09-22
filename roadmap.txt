@@ -1688,6 +1688,8 @@ Add scoring tests.
 
 PRIORITY 4 — PROJECTION SNAPSHOT STORE
 
+STATUS: COMPLETE — implemented and locally verified 2026-09-20.
+
 Create immutable append-only prediction snapshots.
 
 Include:

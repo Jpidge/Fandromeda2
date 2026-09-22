@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FANDROMEDA · v0.4.0-beta
+FANDROMEDA · v0.6.1-beta
 =========================
 
 Personal fantasy football forecasting / dashboard system.
@@ -73,7 +73,14 @@ from fandromeda.pbp_scoring import (
     available_event_fields,
     summarize_pbp_scoring_events,
 )
+from fandromeda.matchups import build_defensive_history, attach_defensive_history
 from fandromeda.yahoo_roster import capture_yahoo_roster
+from fandromeda.yahoo_projections import capture_yahoo_projection_sample, import_yahoo_projection_files
+from fandromeda.project_report import write_project_report
+from fandromeda.validation_reports import save_validation_report, load_validation_reports
+from fandromeda.snapshots import (
+    build_league_snapshot_input, load_snapshot_index, save_prediction_snapshot,
+)
 
 try:
     import nflreadpy as nfl
@@ -94,7 +101,7 @@ except ImportError:
 # ============================================================
 
 APP_NAME = "FANDROMEDA"
-APP_VERSION = "v0.4.0-beta"
+APP_VERSION = "v0.6.1-beta"
 WORDMARK_PATH = Path(
     r"C:\Users\jtpag\Documents\Python\ClaudeDash\fantasy_tool"
     r"\fantasy_tool\tools\wordmark_paths.svg"
@@ -105,11 +112,14 @@ DEFAULT_SEASON = 2026
 DATA_DIR = Path("data")
 CACHE_DIR = DATA_DIR / "cache"
 OUTPUT_DIR = DATA_DIR / "output"
+SNAPSHOT_DIR = DATA_DIR / "snapshots"
+FEATURE_VERSION = "temporal_carryover_v1"
 
 ROSTER_FILE = DATA_DIR / "my_roster.txt"
 YAHOO_BROWSER_PROFILE_DIR = DATA_DIR / "yahoo_browser_profile"
 YAHOO_MANUAL_BROWSER_PROFILE_DIR = DATA_DIR / "yahoo_manual_chrome_profile"
 YAHOO_EXPORT_DIR = DATA_DIR / "yahoo_exports"
+YAHOO_PROJECTION_EXPORT_DIR = DATA_DIR / "yahoo_projection_exports"
 YAHOO_DEFAULT_ROSTER_URL = "https://football.fantasysports.yahoo.com/f1/893771"
 HTML_OUTPUT = Path("index.html")
 LEARNED_WEIGHT_MODEL_PATH = CACHE_DIR / "learned_weight_model.json"
@@ -177,6 +187,7 @@ def ensure_directories() -> None:
     DATA_DIR.mkdir(exist_ok=True)
     CACHE_DIR.mkdir(exist_ok=True)
     OUTPUT_DIR.mkdir(exist_ok=True)
+    SNAPSHOT_DIR.mkdir(exist_ok=True)
 
 
 def clean_text(value) -> str:
@@ -3124,7 +3135,7 @@ def build_html(
 
         roster_rows.append(
             f"""
-            <tr class="roster-player"
+            <tr class="roster-player{' roster-bench' if row.get('slot') == 'BN' else ''}"
                  data-fantasy-team="{html_escape(row.get('manager', ''))}"
                  data-yahoo-order="{yahoo_order}">
                 <td>
@@ -3631,6 +3642,10 @@ th {{
 
 .table-wrap {{
     overflow-x: auto;
+}}
+
+.roster-bench {{
+    background-color: rgba(145, 160, 190, 0.07);
 }}
 
 .tabs {{
@@ -4495,6 +4510,7 @@ LEARNED_WEIGHT_FEATURES = [
     "production_momentum",
     "trend_gap",
     "td_dependency",
+    "opponent_points_allowed_per_game",
 ]
 
 
@@ -4700,6 +4716,7 @@ DIRECT_ML_FEATURES = [
     "offense_snaps_ewma", "offense_pct_ewma", "td_points_ewma",
     "opportunity_score", "opportunity_momentum", "production_momentum",
     "trend_gap", "td_dependency",
+    "opponent_points_allowed_per_game",
 ]
 DIRECT_ML_POSITION_FEATURES = [
     "position_qb", "position_rb", "position_wr", "position_te",
@@ -4851,6 +4868,9 @@ def apply_saved_direct_ml_model(
 
 def build_walk_forward_training(
     seasons: List[int],
+    *,
+    purpose: str = "training",
+    include_matchup_features: bool = False,
 ) -> pd.DataFrame:
 
     """
@@ -4872,9 +4892,8 @@ def build_walk_forward_training(
 
     for season in seasons:
 
-        print(
-            f"Building historical training data: {season}"
-        )
+        label = "holdout/test examples" if purpose == "holdout" else "training examples"
+        print(f"Building historical {label}: {season}")
 
         stats = load_cached(
             f"player_stats_{season}",
@@ -4895,6 +4914,7 @@ def build_walk_forward_training(
 
         stats = merge_usage(stats, load_snaps(season))
         prior_carryover = load_prior_season_carryover(season)
+        matchup_schedule = load_schedule(season) if include_matchup_features else None
 
         # Need at least several weeks to create useful
         # historical examples.
@@ -4935,6 +4955,34 @@ def build_walk_forward_training(
                 previous,
                 target_week,
             )
+
+            if include_matchup_features and not features.empty:
+                # Rolling rows retain the last played opponent; use schedule
+                # identity for the target week and never final game scores.
+                games = matchup_schedule.loc[
+                    (matchup_schedule["season"] == season)
+                    & (matchup_schedule["week"] == target_week),
+                    ["home_team", "away_team"],
+                ]
+                opponents = pd.concat([
+                    games.rename(columns={"home_team": "team", "away_team": "opponent"}),
+                    games.rename(columns={"away_team": "team", "home_team": "opponent"}),
+                ], ignore_index=True)
+                features = features.drop(columns=["opponent"], errors="ignore").merge(
+                    opponents, on="team", how="left", validate="many_to_one",
+                )
+                features["season"] = season
+                if "position_group" not in features.columns:
+                    features["position_group"] = features["position"]
+                defense_history = build_defensive_history(
+                    stats,
+                    target_week=target_week,
+                )
+                features = attach_defensive_history(
+                    features,
+                    defense_history,
+                    target_week=target_week,
+                )
 
             if features.empty:
                 continue
@@ -5018,8 +5066,13 @@ def run_ml_holdout_validation(
         f"\nML holdout validation: train {min(train_seasons)}-"
         f"{max(train_seasons)}, test {holdout_season}."
     )
-    training = build_walk_forward_training(train_seasons)
-    holdout = build_walk_forward_training([holdout_season])
+    print("Experiment: defensive matchup feature candidate (prior-week points allowed by position).")
+    training = build_walk_forward_training(
+        train_seasons, include_matchup_features=True,
+    )
+    holdout = build_walk_forward_training(
+        [holdout_season], purpose="holdout", include_matchup_features=True,
+    )
     if training.empty or holdout.empty:
         print("Holdout validation could not build enough historical examples.")
         return pd.DataFrame()
@@ -5095,6 +5148,8 @@ def run_ml_holdout_validation(
 
     report = pd.DataFrame(results)
     if not report.empty:
+        archived = save_validation_report(report, OUTPUT_DIR, train_seasons, holdout_season)
+        print(f"Archived holdout: {archived.resolve()}")
         report.to_csv(ML_HOLDOUT_REPORT_PATH, index=False)
         print("\nUNSEEN-SEASON RESULTS — OFFENSE AND BY POSITION")
         print(
@@ -5479,6 +5534,34 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--capture-yahoo-projections",
+        action="store_true",
+        help=(
+            "Capture a Yahoo matchup page containing numeric weekly Proj "
+            "values without changing the working roster"
+        ),
+    )
+
+    parser.add_argument(
+        "--import-yahoo-projections", nargs="+", type=Path,
+        help="Parse expanded Yahoo matchup text files and save a separate roster coverage report",
+    )
+    parser.add_argument(
+        "--yahoo-roster-mapping", type=Path, default=OUTPUT_DIR / "roster_mapping.csv",
+        help="Existing roster mapping CSV used to check Yahoo projection coverage",
+    )
+
+    parser.add_argument(
+        "--yahoo-projection-url",
+        type=str,
+        default=None,
+        help=(
+            "Optional Yahoo matchup URL; defaults to this league's matchup "
+            "page for --yahoo-week"
+        ),
+    )
+
+    parser.add_argument(
         "--yahoo-roster-url",
         type=str,
         default=YAHOO_DEFAULT_ROSTER_URL,
@@ -5546,6 +5629,31 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--no-snapshot",
+        action="store_true",
+        help=(
+            "Do not save an append-only prediction snapshot for this run; "
+            "use only for intentional diagnostics or reruns"
+        ),
+    )
+
+    parser.add_argument(
+        "--list-snapshots",
+        action="store_true",
+        help=(
+            "List the readable index of saved prediction snapshots and exit"
+        ),
+    )
+    parser.add_argument(
+        "--project-report", action="store_true",
+        help="Generate the creator-only validation and benchmark report, then exit",
+    )
+    parser.add_argument(
+        "--no-open-project-report", action="store_true",
+        help="Generate the creator report without opening it in a browser",
+    )
+
+    parser.add_argument(
         "--train-ml",
         action="store_true",
         help="Train and save the separate direct XGBoost forecast",
@@ -5566,6 +5674,14 @@ def parse_args():
         help=(
             "Test both ML layers on the prior season without using it "
             "for training"
+        ),
+    )
+    parser.add_argument(
+        "--validate-ml-multi-fold",
+        action="store_true",
+        help=(
+            "Run the defensive-matchup holdout experiment for both 2024 "
+            "and 2025 in one invocation"
         ),
     )
 
@@ -5599,6 +5715,8 @@ def parse_args():
         ),
     )
 
+    parser.add_argument("--validation-report", action="store_true",
+                        help="Review archived holdouts without downloads or training")
     return parser.parse_args()
 
 
@@ -5612,6 +5730,105 @@ def main():
     args = parse_args()
 
     ensure_directories()
+
+    if args.validation_report:
+        reports = load_validation_reports(OUTPUT_DIR)
+        if reports.empty:
+            print("No archived validation results available.")
+        else:
+            offense = reports[reports["position"] == "Offense (QB/RB/WR/TE)"]
+            print(offense[["holdout_season", "model", "mae", "rmse", "precision", "review_status"]].to_string(index=False))
+        return
+
+    if args.project_report:
+        report_path = write_project_report(Path.cwd(), Path("project_lab.html"))
+        print(f"Creator project report: {report_path.resolve()}")
+        if not args.no_open_project_report:
+            try:
+                opened = webbrowser.open_new_tab(report_path.resolve().as_uri())
+                if not opened and os.name == "nt":
+                    os.startfile(str(report_path.resolve()))
+            except Exception as exc:
+                print(f"WARNING: unable to open creator report automatically: {exc}")
+        return
+
+    if args.import_yahoo_projections:
+        if args.week is None:
+            raise ValueError("--import-yahoo-projections requires an explicit --week.")
+        batch, summary = import_yahoo_projection_files(
+            args.import_yahoo_projections, pd.read_csv(args.yahoo_roster_mapping),
+            YAHOO_PROJECTION_EXPORT_DIR / "imports", season=args.season, week=args.week,
+        )
+        print(f"Yahoo import saved: {batch.resolve()}")
+        print(f"Roster coverage: {summary['matched_entries']}/{summary['roster_entries']}")
+        print(f"Numeric projections: {summary['numeric_projections']}; "
+              f"missing: {summary['missing_entries']}; unexpected: {summary['unexpected_entries']}")
+        print("Complete league coverage." if summary['complete_roster_coverage'] else "INCOMPLETE league coverage; inspect roster_coverage.csv.")
+        print("Benchmark eligibility pending capture-cutoff and kickoff validation.")
+        return
+
+    if args.list_snapshots:
+        snapshots = load_snapshot_index(SNAPSHOT_DIR)
+        if snapshots.empty:
+            print("No prediction snapshots have been saved yet.")
+            print(f"Snapshot directory: {SNAPSHOT_DIR.resolve()}")
+            return
+        print(f"Prediction snapshots: {len(snapshots):,}")
+        print(f"Snapshot index: {(SNAPSHOT_DIR / 'snapshot_index.csv').resolve()}")
+        display_columns = [
+            "captured_at_utc", "schema_version", "season", "target_week", "row_count",
+            "primary_projection_model", "snapshot_path",
+        ]
+        display_columns = [
+            column for column in display_columns if column in snapshots.columns
+        ]
+        print(snapshots[display_columns].to_string(index=False))
+        print("v1 records contain the NFL projection pool; v2 league runs contain roster entries.")
+        return
+
+    if args.capture_yahoo_projections:
+        if args.yahoo_attach_port is None:
+            raise ValueError(
+                "--capture-yahoo-projections currently requires "
+                "--yahoo-attach-port for the logged-in Chrome session."
+            )
+        if args.yahoo_week is None or args.yahoo_week.strip().lower() == "auto":
+            if args.week is not None:
+                projection_week = args.week
+            else:
+                print("Determining FANDROMEDA's upcoming projection week...")
+                projection_stats = load_current_stats(args.season, refresh=True)
+                completed = pd.to_numeric(
+                    projection_stats.get("week", pd.Series(dtype=float)),
+                    errors="coerce",
+                ).dropna()
+                if completed.empty:
+                    raise RuntimeError(
+                        "Unable to determine the upcoming Yahoo projection week."
+                    )
+                projection_week = int(completed.max()) + 1
+        else:
+            projection_week = int(args.yahoo_week)
+        if projection_week < 1:
+            raise ValueError("--yahoo-week must be at least 1.")
+
+        league_url = YAHOO_DEFAULT_ROSTER_URL.rstrip("/")
+        matchup_url = args.yahoo_projection_url or (
+            f"{league_url}/matchup?week={projection_week}"
+        )
+        capture_path, source = capture_yahoo_projection_sample(
+            matchup_url,
+            YAHOO_PROJECTION_EXPORT_DIR,
+            attach_port=args.yahoo_attach_port,
+            native_copy=args.yahoo_native_copy,
+            confirm=not args.yahoo_no_confirm,
+            season=args.season,
+            week=projection_week,
+        )
+        print(f"Captured Yahoo Week {projection_week} projections from: {source}")
+        print(f"Raw projection sample: {capture_path.resolve()}")
+        print("The working roster and prediction snapshots were not changed.")
+        return
 
     if args.refresh_yahoo_roster:
         yahoo_capture_url = args.yahoo_roster_url
@@ -5729,7 +5946,7 @@ def main():
     )
 
     print(
-        "Scoring:         Standard"
+        f"Scoring:         Fantasy Football Coalition non-PPR ({SCORING_VERSION})"
     )
 
     print(
@@ -5999,6 +6216,35 @@ def main():
 
     projections = apply_depth_context(projections, depth_context)
 
+    # The mutable output CSV is useful for the dashboard, but it cannot tell
+    # us what a projection said yesterday.  Save the finalized player-level
+    # forecast before writing that live output so later evaluation has an
+    # exact, append-only record of this run.
+    if not args.no_snapshot:
+        primary_projection_model = (
+            "learned_weight_ridge"
+            if learned_weight_model is not None
+            else "baseline_heuristic"
+        )
+        league_snapshot = build_league_snapshot_input(
+            roster.assign(team=roster["team"].map(normalize_team)), projections,
+        )
+        snapshot_path, snapshot_index_path, _ = save_prediction_snapshot(
+            league_snapshot,
+            SNAPSHOT_DIR,
+            season=args.season,
+            target_week=target_week,
+            metadata={
+                "app_version": APP_VERSION,
+                "feature_version": FEATURE_VERSION,
+                "scoring_version": SCORING_VERSION,
+                "primary_projection_model": primary_projection_model,
+            },
+        )
+        print(f"Saved append-only league snapshot: {len(league_snapshot):,} roster entries")
+        print(f"  {snapshot_path.resolve()}")
+        print(f"Snapshot index: {snapshot_index_path.resolve()}")
+
     # --------------------------------------------------------
     # Waiver pool.
     # --------------------------------------------------------
@@ -6080,12 +6326,16 @@ def main():
             results
         )
 
-    if args.validate_ml:
-        holdout_season = args.season - 1
-        training_seasons = list(
-            range(max(1999, args.season - 8), holdout_season)
-        )
-        run_ml_holdout_validation(training_seasons, holdout_season)
+    if args.validate_ml or args.validate_ml_multi_fold:
+        if args.validate_ml_multi_fold:
+            holdout_seasons = (2024, 2025)
+        else:
+            holdout_seasons = (args.season - 1,)
+        for holdout_season in holdout_seasons:
+            training_seasons = list(
+                range(max(1999, holdout_season - 7), holdout_season)
+            )
+            run_ml_holdout_validation(training_seasons, holdout_season)
 
     # --------------------------------------------------------
     # Console summary.
